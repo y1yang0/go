@@ -481,6 +481,7 @@ var passes = [...]pass{
 	{name: "check bce", fn: checkbce},
 	{name: "branchelim", fn: branchelim},
 	{name: "late fuse", fn: fuseLate},
+	{name: "late opt", fn: opt}, // merging blocks gives a new window for generic optimization
 	{name: "dse", fn: dse},
 	{name: "writebarrier", fn: writebarrier, required: true}, // expand write barrier ops
 	{name: "insert resched checks", fn: insertLoopReschedChecks,
