@@ -1,0 +1,1072 @@
+(*regAllocState).placeSpills method(*regAllocState) func()
+  b1:
+    (?) v2 = SP <uintptr>
+    (?) v3 = SB <uintptr>
+    (-1974) v5 = ArgIntReg <*regAllocState> {s+0} [0] (s[*regAllocState])
+    (?) v47 = Const64 <int> [0] (i[int], nfirst[int], oldSched.cap[int], oldSched.len[int])
+    (1986) v49 = OffPtr <*[]valState> [120] v5
+    (?) v81 = ConstNil <*Block> (b[*Block])
+    (?) v112 = Addr <*uint8> {type:int} v3
+    (?) v115 = Const64 <int> [3]
+    (?) v118 = Addr <*uint8> {type:cmd/compile/internal/ssa.valState} v3
+    (?) v126 = Const64 <int> [1]
+    (?) v132 = Addr <*uint8> {type:string} v3
+    (?) v171 = Const16 <int16> [0] (bestDepth[int16], depth[int16])
+    (?) v200 = Const64 <int> [100]
+    (?) v394 = Const64 <uintptr> [24]
+    (?) v440 = Const64 <uintptr> [32]
+    (?) v466 = Const32 <Op> [1492]
+    (?) v469 = Const32 <Op> [693]
+    (?) v472 = Const32 <Op> [215]
+    (?) v477 = Const32 <Op> [1036]
+    (?) v480 = Const32 <Op> [1335]
+    (?) v485 = Const32 <Op> [1914]
+    (?) v488 = Const32 <Op> [1601]
+    (?) v491 = Const32 <Op> [1724]
+    (?) v496 = Const32 <Op> [2047]
+    (?) v499 = Const32 <Op> [2288]
+    (?) v502 = Const32 <Op> [2342]
+    (?) v507 = Const32 <Op> [2646]
+    (?) v511 = Const32 <Op> [2662]
+    (?) v515 = Const32 <Op> [2663]
+    (?) v527 = Addr <*uint8> {type:map[cmd/compile/internal/ssa.ID][]*cmd/compile/internal/ssa.Value} v3
+    (?) v539 = Addr <*uint8> {type:*cmd/compile/internal/ssa.Value} v3
+    (?) v673 = Addr <*uint8> {go:string."nil v, s.orig[%d], vi = %v, spill = %s"} v3
+    (?) v667 = Const64 <int> [38]
+    (?) v664 = ConstNil <**Value> (oldSched.ptr[**Value])
+    (1987) v505 = Const64 <int> [40]
+    (1997) v784 = Const64 <uint64> [3]
+    (178) v775 = Const64 <uint64> [5]
+    (2043) v1178 = Const64 <int> [24]
+    (2070) v871 = Const64 <int> [-1]
+    (?) v1 = InitMem <mem>
+    (-1981) v7 = VarDef <mem> {.autotmp_52} v1
+    (-1981) v8 = LocalAddr <*map.hdr[ID][]*Value> {.autotmp_52} v2 v7
+    (+1981) v9 = Zero <mem> {map.hdr[ID][]*Value} [48] v8 v7
+    (-1981) v10 = VarDef <mem> {.autotmp_53} v9
+    (-1981) v11 = LocalAddr <*map.bucket[ID][]*Value> {.autotmp_53} v2 v10
+    (1981) v12 = Zero <mem> {map.bucket[ID][]*Value} [240] v11 v10
+    (-1981) v13 = LocalAddr <*map.hdr[ID][]*Value> {.autotmp_52} v2 v12
+    (-1981) v14 = LocalAddr <*map.bucket[ID][]*Value> {.autotmp_53} v2 v12
+    (1981) v16 = OffPtr <**map.bucket[ID][]*Value> [16] v13
+    (1986) v58 = OffPtr <*int> [128] v5
+    (1981) v306 = Store <mem> {*map.bucket[ID][]*Value} v16 v14 v12
+    (1986) v290 = Addr <*uint32> {runtime.writeBarrier} v3
+    (?) v264 = Const32 <uint32> [0]
+    (-1981) v18 = LocalAddr <*map.hdr[ID][]*Value> {.autotmp_52} v2 v306
+    (1981) v23 = OffPtr <*uint32> [12] v18
+    (1981) v19 = StaticCall <uint32,mem> {AuxCall{runtime.fastrand}} v306
+    (1981) v21 = SelectN <uint32> [0] v19
+    (1981) v20 = SelectN <mem> [1] v19
+    (1981) v310 = Store <mem> {uint32} v23 v21 v20
+    (-1981) v25 = LocalAddr <*map.hdr[ID][]*Value> {.autotmp_52} v2 v310 (start[map[ID][]*Value])
+    (-1984) v27 = VarDef <mem> {.autotmp_58} v310
+    (-1984) v28 = LocalAddr <*map.hdr[ID][]*Value> {.autotmp_58} v2 v27
+    (+1984) v29 = Zero <mem> {map.hdr[ID][]*Value} [48] v28 v27
+    (-1984) v30 = VarDef <mem> {.autotmp_59} v29
+    (-1984) v31 = LocalAddr <*map.bucket[ID][]*Value> {.autotmp_59} v2 v30
+    (1984) v32 = Zero <mem> {map.bucket[ID][]*Value} [240] v31 v30
+    (-1984) v33 = LocalAddr <*map.hdr[ID][]*Value> {.autotmp_58} v2 v32
+    (-1984) v34 = LocalAddr <*map.bucket[ID][]*Value> {.autotmp_59} v2 v32
+    (1984) v36 = OffPtr <**map.bucket[ID][]*Value> [16] v33
+    (1984) v929 = Store <mem> {*map.bucket[ID][]*Value} v36 v34 v32
+    (-1984) v38 = LocalAddr <*map.hdr[ID][]*Value> {.autotmp_58} v2 v929
+    (1984) v43 = OffPtr <*uint32> [12] v38
+    (1984) v39 = StaticCall <uint32,mem> {AuxCall{runtime.fastrand}} v929
+    (1984) v41 = SelectN <uint32> [0] v39
+    (1984) v40 = SelectN <mem> [1] v39
+    (1984) v921 = Store <mem> {uint32} v43 v41 v40
+    (+1986) v48 = NilCheck <void> v5 v921
+    (-1984) v45 = LocalAddr <*map.hdr[ID][]*Value> {.autotmp_58} v2 v921 (after[map[ID][]*Value])
+    (1986) v78 = Load <int> v58 v921
+    Plain -> b2
+  b2: <- b1 b4
+    (-1986) v52 = Phi <int> v47 v600 (i[int])
+    (-2079) v1364 = Phi <mem> v921 v1365
+    (+1986) v54 = Less64 <bool> v52 v78
+    If v54 -> b3 b5 (likely)
+  b3: <- b2
+    (+1987) v22 = Load <*valState> v49 v1364
+    (-1987) v940 = OffPtr <*int> [128] v5
+    (+1987) v15 = Load <int> v940 v1364
+    (1987) v62 = IsInBounds <bool> v52 v15
+    If v62 -> b6 b7 (likely)
+  b4: <- b9 b11 b127
+    (-2079) v1365 = Phi <mem> v70 v70 v1366
+    (+1986) v600 = Add64 <int> v126 v52
+    Plain -> b2
+  b5: <- b2
+    (2079) v605 = OffPtr <*[]*Block> [344] v5
+    (+2079) v912 = Load <**Block> v605 v1364
+    (-2079) v893 = OffPtr <*int> [352] v5
+    (+2079) v898 = Load <int> v893 v1364
+    Plain -> b134
+  b6: <- b3
+    (-1987) v68 = VarDef <mem> {vi} v1364
+    (1987) v69 = LocalAddr <*valState> {vi} v2 v68
+    (1987) v509 = Mul64 <int> v505 v52
+    (1987) v66 = AddPtr <*valState> v22 v509
+    (1987) v70 = Move <mem> {valState} [40] v69 v66 v68
+    (1988) v71 = LocalAddr <*valState> {vi} v2 v70
+    (1988) v72 = OffPtr <**Value> [16] v71
+    (+1988) v73 = Load <*Value> v72 v70 (spill[*Value])
+    (+1989) v520 = IsNonNil <bool> v73
+    If v520 -> b8 b9
+  b7: <- b3
+    (1987) v64 = PanicBounds <mem> [0] v52 v15 v1364
+    Exit v64
+  b8: <- b6
+    (1992) v79 = OffPtr <**Block> [64] v73
+    (+1992) v80 = Load <*Block> v79 v70
+    (1992) v82 = IsNonNil <bool> v80
+    If v82 -> b11 b10
+  b9: <- b6
+    Plain -> b4
+  b10: <- b8
+    (1997) v86 = OffPtr <*[]*Value> [152] v5
+    (+1997) v972 = Load <**Value> v86 v70
+    (-1997) v953 = OffPtr <*int> [160] v5
+    (+1997) v965 = Load <int> v953 v70
+    (1997) v90 = IsInBounds <bool> v52 v965
+    If v90 -> b12 b13 (likely)
+  b11: <- b8
+    Plain -> b4
+  b12: <- b10
+    (1997) v517 = Lsh64x64 <int> [false] v52 v784
+    (1997) v94 = AddPtr <**Value> v972 v517
+    (1997) v96 = Load <*Value> v94 v70 (bestArg[*Value], v[*Value])
+    (+2003) v227 = IsNonNil <bool> v96
+    If v227 -> b14 b16
+  b13: <- b10
+    (1997) v92 = PanicBounds <mem> [0] v52 v965 v70
+    Exit v92
+  b14: <- b12
+    (2006) v169 = OffPtr <**Block> [64] v96
+    (+2006) v170 = Load <*Block> v169 v70 (b[*Block], best[*Block])
+    (2009) v174 = OffPtr <**loopnest> [336] v5
+    (+2009) v175 = Load <*loopnest> v174 v70
+    (2009) v176 = NilCheck <void> v175 v70
+    (2009) v177 = OffPtr <*[]*loop> [8] v175
+    (2009) v179 = NilCheck <void> v170 v70
+    (2009) v180 = OffPtr <*ID> [0] v170
+    (2009) v181 = Load <ID> v180 v70
+    (2009) v183 = SignExt32to64 <int> v181
+    (2009) v949 = Load <**loop> v177 v70
+    (2009) v872 = OffPtr <*int> [16] v175
+    (2009) v878 = Load <int> v872 v70
+    (2009) v184 = IsInBounds <bool> v183 v878
+    If v184 -> b20 b21 (likely)
+  b16: <- b12
+    (+2004) v100 = StaticCall <*uint8,int,mem> {AuxCall{cmd/compile/internal/ssa.(*Value).LongString}} [8] v73 v70
+    (2004) v101 = SelectN <mem> [2] v100
+    (-2004) v103 = VarDef <mem> {.autotmp_40} v101
+    (-2004) v104 = LocalAddr <*[3]any> {.autotmp_40} v2 v103
+    (2004) v105 = Zero <mem> {[3]any} [48] v104 v103
+    (-2004) v106 = LocalAddr <*[3]any> {.autotmp_40} v2 v105
+    (2004) v116 = OffPtr <*any> [0] v106
+    (2004) v127 = OffPtr <*any> [16] v106
+    (2004) v136 = OffPtr <*any> [32] v106
+    (2004) v109 = StaticCall <unsafe.Pointer,mem> {AuxCall{runtime.convT64}} [8] v52 v105
+    (2004) v111 = SelectN <unsafe.Pointer> [0] v109
+    (2004) v110 = SelectN <mem> [1] v109
+    (2004) v814 = OffPtr <**uint8> [8] v106
+    (2004) v862 = OffPtr <**uint8> [24] v106
+    (2004) v857 = OffPtr <**uint8> [40] v106
+    (2004) v936 = SelectN <*uint8> [0] v100
+    (-2004) v303 = SelectN <int> [1] v100
+    (2004) v976 = Store <mem> {uintptr} v116 v112 v110
+    (2004) v924 = Store <mem> {*uint8} v814 v111 v976
+    (2004) v119 = LocalAddr <*valState> {vi} v2 v924
+    (2004) v120 = StaticCall <unsafe.Pointer,mem> {AuxCall{runtime.convT}} [16] v118 v119 v924
+    (2004) v122 = SelectN <unsafe.Pointer> [0] v120
+    (2004) v121 = SelectN <mem> [1] v120
+    (2004) v973 = Store <mem> {uintptr} v127 v118 v121
+    (2004) v920 = Store <mem> {*uint8} v862 v122 v973
+    (2004) v129 = StaticCall <unsafe.Pointer,mem> {AuxCall{runtime.convTstring}} [16] v936 v303 v920
+    (2004) v131 = SelectN <unsafe.Pointer> [0] v129
+    (2004) v130 = SelectN <mem> [1] v129
+    (2004) v964 = Store <mem> {uintptr} v136 v132 v130
+    (2004) v979 = Store <mem> {*uint8} v857 v131 v964
+    (2004) v147 = StaticCall <unsafe.Pointer,unsafe.Pointer,mem> {AuxCall{fmt.Errorf}} [40] v673 v667 v106 v115 v115 v979
+    (2004) v150 = SelectN <*uintptr> [0] v147
+    (2004) v154 = IsNonNil <bool> v150
+    (-2004) v732 = SelectN <mem> [2] v147
+    (2004) v523 = SelectN <*uint8> [1] v147
+    If v154 -> b19 b18
+  b18: <- b16 b19
+    (-2004) v159 = Phi <*uint8> v150 v158
+    (2004) v164 = StaticCall <mem> {AuxCall{runtime.gopanic}} [16] v159 v523 v732
+    (2004) v165 = SelectN <mem> [0] v164
+    Exit v165
+  b19: <- b16
+    (2004) v156 = OffPtr <**uint8> [8] v150
+    (2004) v158 = Load <*uint8> v156 v732
+    Plain -> b18
+  b20: <- b14
+    (2009) v928 = Lsh64x64 <int> [false] v183 v784
+    (2009) v188 = AddPtr <**loop> v949 v928
+    (2009) v190 = Load <*loop> v188 v70 (l[*loop])
+    (2009) v192 = IsNonNil <bool> v190
+    If v192 -> b23 b22
+  b21: <- b14
+    (2009) v186 = PanicBounds <mem> [0] v183 v878 v70
+    Exit v186
+  b22: <- b20 b23
+    (-2035) v1277 = Phi <int16> v171 v197 (bestDepth[int16])
+    (+2014) v443 = Add64 <int> v1294 v126 (i[int])
+    Plain -> b24
+  b23: <- b20
+    (2010) v196 = OffPtr <*int16> [68] v190
+    (+2010) v197 = Load <int16> v196 v70 (bestDepth[int16])
+    Plain -> b22
+  b24: <- b22 b26
+    (-2014) v199 = Phi <int> v47 v443 (i[int])
+    (-2035) v1276 = Phi <int16> v1277 v1278 (bestDepth[int16])
+    (-2067) v1300 = Phi <*Value> v96 v1306 (bestArg[*Value])
+    (-2066) v1332 = Phi <*Block> v170 v1337 (best[*Block])
+    (-2017) v1359 = Phi <*Block> v170 v299 (b[*Block], p[*Block], x[*Block])
+    (+2014) v201 = Less64 <bool> v199 v200
+    If v201 -> b25 b27 (likely)
+  b25: <- b24
+    (2019) v206 = OffPtr <*SparseTree> [8] v5
+    (+2019) v208 = InlMark <void> [30359] v70
+    (+178) v209 = NilCheck <void> v1359 v70
+    (178) v210 = OffPtr <*ID> [0] v1359
+    (178) v211 = Load <ID> v210 v70
+    (178) v213 = SignExt32to64 <int> v211
+    (+2019) v848 = Load <*SparseTreeNode> v206 v70 (t.ptr[*SparseTreeNode])
+    (-2019) v832 = OffPtr <*int> [16] v5
+    (+2019) v835 = Load <int> v832 v70 (t.len[int])
+    (178) v214 = IsInBounds <bool> v213 v835
+    If v214 -> b30 b29 (likely)
+  b26: <- b55 b56
+    (-2066) v1337 = Phi <*Block> v1332 v1339 (best[*Block])
+    (-2035) v1278 = Phi <int16> v1276 v1279 (bestDepth[int16])
+    (-2067) v1306 = Phi <*Value> v1300 v1308 (bestArg[*Value])
+    Plain -> b24
+  b27: <- b24 b49
+    (+2066) v945 = Load <uint32> v290 v70
+    (+2066) v944 = Neq32 <bool> v945 v264
+    If v944 -> b203 b194 (unlikely)
+  b29: <- b25
+    (178) v216 = PanicBounds <mem> [0] v213 v835 v70
+    Exit v216
+  b30: <- b25
+    (178) v1192 = Lsh64x64 <int> [false] v213 v775
+    (178) v218 = AddPtr <*SparseTreeNode> v848 v1192
+    (178) v219 = OffPtr <**Block> [0] v218
+    (178) v221 = Load <*Block> v219 v70 (c[*Block], ~R0[*Block])
+    Plain -> b31
+  b31: <- b30 b47
+    (-2019) v223 = Phi <*Block> v221 v295 (b[*Block], c[*Block], x[*Block])
+    (-2019) v1294 = Phi <int> v199 v298 (i[int])
+    (+2019) v224 = IsNonNil <bool> v223
+    If v224 -> b35 b34
+  b32: <- b35
+    (2020) v235 = OffPtr <*ID> [0] v223
+    (+2020) v236 = Load <ID> v235 v70
+    (2020) v238 = SignExt32to64 <int> v236
+    (2020) v239 = IsInBounds <bool> v238 v835
+    If v239 -> b37 b38 (likely)
+  b34: <- b35 b44 b31
+    (-2026) v299 = Phi <*Block> v81 v223 v81 (b[*Block], best[*Block])
+    (+2026) v1161 = IsNonNil <bool> v299
+    If v1161 -> b48 b49
+  b35: <- b31
+    (2019) v226 = Less64 <bool> v1294 v200
+    If v226 -> b32 b34 (likely)
+  b37: <- b32
+    (2020) v248 = OffPtr <*int32> [24] v71
+    (2020) v249 = Load <int32> v248 v70
+    (2020) v1131 = Lsh64x64 <int> [false] v238 v775
+    (2020) v243 = AddPtr <*SparseTreeNode> v848 v1131
+    (2020) v244 = OffPtr <*int32> [24] v243
+    (2020) v246 = Load <int32> v244 v70
+    (2020) v250 = Leq32 <bool> v246 v249
+    If v250 -> b39 b47
+  b38: <- b32
+    (2020) v241 = PanicBounds <mem> [0] v238 v835 v70
+    Exit v241
+  b39: <- b37
+    (2020) v267 = OffPtr <*int32> [28] v243
+    (2020) v269 = Load <int32> v267 v70
+    (2020) v271 = OffPtr <*int32> [28] v71
+    (2020) v272 = Load <int32> v271 v70
+    (2020) v273 = Leq32 <bool> v272 v269
+    If v273 -> b44 b47
+  b44: <- b39
+    Plain -> b34
+  b47: <- b39 b37
+    (+2019) v282 = InlMark <void> [30360] v70
+    (+171) v293 = OffPtr <**Block> [8] v243
+    (171) v295 = Load <*Block> v293 v70 (c[*Block], ~R0[*Block])
+    (+2019) v298 = Add64 <int> v1294 v126 (i[int])
+    Plain -> b31
+  b48: <- b34
+    (2032) v311 = OffPtr <*ID> [0] v299
+    (+2032) v312 = Load <ID> v311 v70
+    (2032) v314 = SignExt32to64 <int> v312
+    (2032) v315 = IsInBounds <bool> v314 v878
+    If v315 -> b50 b51 (likely)
+  b49: <- b34
+    Plain -> b27
+  b50: <- b48
+    (2032) v970 = Lsh64x64 <int> [false] v314 v784
+    (2032) v319 = AddPtr <**loop> v949 v970
+    (2032) v321 = Load <*loop> v319 v70 (l[*loop])
+    (2032) v322 = IsNonNil <bool> v321
+    If v322 -> b53 b52
+  b51: <- b48
+    (2032) v317 = PanicBounds <mem> [0] v314 v878 v70
+    Exit v317
+  b52: <- b50 b53
+    (-2035) v328 = Phi <int16> v171 v327 (bestDepth[int16], depth[int16])
+    (+2035) v330 = Less16 <bool> v1276 v328
+    If v330 -> b55 b54
+  b53: <- b50
+    (2033) v326 = OffPtr <*int16> [68] v321
+    (+2033) v327 = Load <int16> v326 v70 (depth[int16])
+    Plain -> b52
+  b54: <- b52
+    (2042) v334 = OffPtr <*[]Edge> [40] v299
+    (+2042) v734 = Load <*Edge> v334 v70
+    (-2042) v768 = OffPtr <*int> [48] v299
+    (+2042) v727 = Load <int> v768 v70
+    (2042) v337 = Eq64 <bool> v727 v126
+    If v337 -> b59 b58
+  b55: <- b52
+    Plain -> b26
+  b56: <- b66 b74
+    (-2035) v1279 = Phi <int16> v1280 v1281 (bestDepth[int16])
+    (-2067) v1308 = Phi <*Value> v1309 v1310 (bestArg[*Value])
+    (-2066) v1339 = Phi <*Block> v1340 v1341 (best[*Block])
+    Plain -> b26
+  b58: <- b54
+    (2053) v399 = OffPtr <*[][]startReg> [272] v5
+    (+2053) v406 = Load <*[]startReg> v399 v70
+    (-2053) v403 = OffPtr <*int> [280] v5
+    (+2053) v404 = Load <int> v403 v70
+    (2053) v407 = IsInBounds <bool> v314 v404
+    If v407 -> b69 b70 (likely)
+  b59: <- b54
+    (2043) v341 = OffPtr <*[][]endReg> [248] v5
+    (+2043) v699 = Load <*[]endReg> v341 v70
+    (-2043) v695 = OffPtr <*int> [256] v5
+    (+2043) v353 = OffPtr <**Block> [0] v734
+    (2043) v355 = Load <*Block> v353 v70
+    (2043) v356 = NilCheck <void> v355 v70
+    (2043) v357 = OffPtr <*ID> [0] v355
+    (2043) v358 = Load <ID> v357 v70
+    (2043) v360 = SignExt32to64 <int> v358
+    (+2043) v696 = Load <int> v695 v70
+    (2043) v361 = IsInBounds <bool> v360 v696
+    If v361 -> b61 b62 (likely)
+  b61: <- b59
+    (2043) v1193 = Mul64 <int> v1178 v360
+    (2043) v365 = AddPtr <*[]endReg> v699 v1193
+    (2043) v345 = Load <*endReg> v365 v70
+    (2043) v313 = OffPtr <*int> [8] v365
+    (2043) v371 = Convert <uintptr> v345 v70
+    (2043) v318 = Load <int> v313 v70
+    Plain -> b63
+  b62: <- b59
+    (2043) v363 = PanicBounds <mem> [0] v360 v696 v70
+    Exit v363
+  b63: <- b61 b65
+    (-2043) v372 = Phi <int> v47 v389
+    (-2043) v1268 = Phi <uintptr> v371 v395
+    (+2043) v374 = Less64 <bool> v372 v318
+    If v374 -> b64 b66 (likely)
+  b64: <- b63
+    (2043) v377 = Convert <unsafe.Pointer> v1268 v70
+    (2043) v1038 = OffPtr <**Value> [8] v377
+    (2043) v1031 = OffPtr <**Value> [16] v377
+    (2043) v1055 = Load <*Value> v1038 v70
+    (2043) v1036 = Load <*Value> v1031 v70
+    (+2044) v383 = EqPtr <bool> v1055 v96
+    If v383 -> b68 b65
+  b65: <- b64
+    (+2043) v389 = Add64 <int> v372 v126
+    (2043) v395 = Add64 <uintptr> v1268 v394
+    Plain -> b63
+  b66: <- b63 b68
+    (-2035) v1280 = Phi <int16> v1276 v328 (bestDepth[int16])
+    (-2067) v1309 = Phi <*Value> v1300 v1036 (bestArg[*Value])
+    (-2066) v1340 = Phi <*Block> v1332 v299 (best[*Block])
+    Plain -> b56
+  b68: <- b64
+    Plain -> b66
+  b69: <- b58
+    (2053) v925 = Mul64 <int> v1178 v314
+    (2053) v411 = AddPtr <*[]startReg> v406 v925
+    (2053) v305 = Load <*startReg> v411 v70
+    (2053) v1030 = OffPtr <*int> [8] v411
+    (2053) v417 = Convert <uintptr> v305 v70
+    (2053) v304 = Load <int> v1030 v70
+    Plain -> b71
+  b70: <- b58
+    (2053) v409 = PanicBounds <mem> [0] v314 v404 v70
+    Exit v409
+  b71: <- b69 b73
+    (-2053) v418 = Phi <int> v47 v435
+    (-2053) v1264 = Phi <uintptr> v417 v441
+    (+2053) v420 = Less64 <bool> v418 v304
+    If v420 -> b72 b74 (likely)
+  b72: <- b71
+    (2053) v423 = Convert <unsafe.Pointer> v1264 v70
+    (2053) v901 = OffPtr <**Value> [8] v423
+    (2053) v981 = OffPtr <**Value> [16] v423
+    (2053) v909 = Load <*Value> v901 v70
+    (2053) v886 = Load <*Value> v981 v70
+    (+2054) v429 = EqPtr <bool> v909 v96
+    If v429 -> b76 b73
+  b73: <- b72
+    (+2053) v435 = Add64 <int> v418 v126
+    (2053) v441 = Add64 <uintptr> v1264 v440
+    Plain -> b71
+  b74: <- b71 b76
+    (-2035) v1281 = Phi <int16> v1276 v328 (bestDepth[int16])
+    (-2067) v1310 = Phi <*Value> v1300 v886 (bestArg[*Value])
+    (-2066) v1341 = Phi <*Block> v1332 v299 (best[*Block])
+    Plain -> b56
+  b76: <- b72
+    Plain -> b74
+  b77: <- b122
+    (1976) v516 = Eq32 <bool> v515 v462 (~R0[bool])
+    If v516 -> b129 b128
+  b78: <- b194
+    (2068) v461 = OffPtr <*Op> [4] v96
+    (2068) v462 = Load <Op> v461 v452 (op[Op], op[Op])
+    (2068) v463 = InlMark <void> [30361] v452
+    (+1976) v465 = InlMark <void> [30363] v452
+    (+95) v467 = Leq32 <bool> v462 v466
+    If v467 -> b81 b82
+  b81: <- b78
+    (-95) v470 = Leq32 <bool> v462 v469
+    If v470 -> b84 b85
+  b82: <- b78
+    (-95) v486 = Leq32 <bool> v462 v485
+    If v486 -> b101 b102
+  b83: <- b86 b92
+    Plain -> b120
+  b84: <- b81
+    (96) v473 = Eq32 <bool> v472 v462
+    If v473 -> b87 b88
+  b85: <- b81
+    (96) v478 = Eq32 <bool> v477 v462
+    If v478 -> b93 b94
+  b86: <- b88
+    Plain -> b83
+  b87: <- b84
+    Plain -> b89
+  b88: <- b84
+    (+96) v475 = Eq32 <bool> v469 v462
+    If v475 -> b91 b86
+  b89: <- b87 b91 b93 b96 b99 b104 b107 b110 b112 b115 b118
+    Plain -> b129
+  b91: <- b88
+    Plain -> b89
+  b92: <- b97
+    Plain -> b83
+  b93: <- b85
+    Plain -> b89
+  b94: <- b85
+    (96) v481 = Eq32 <bool> v480 v462
+    If v481 -> b96 b97
+  b96: <- b94
+    Plain -> b89
+  b97: <- b94
+    (96) v483 = Eq32 <bool> v466 v462
+    If v483 -> b99 b92
+  b99: <- b97
+    Plain -> b89
+  b100: <- b103 b111
+    Plain -> b120
+  b101: <- b82
+    (96) v489 = Eq32 <bool> v488 v462
+    If v489 -> b104 b105
+  b102: <- b82
+    (96) v497 = Eq32 <bool> v496 v462
+    If v497 -> b112 b113
+  b103: <- b108
+    Plain -> b100
+  b104: <- b101
+    Plain -> b89
+  b105: <- b101
+    (+96) v492 = Eq32 <bool> v491 v462
+    If v492 -> b107 b108
+  b107: <- b105
+    Plain -> b89
+  b108: <- b105
+    (+96) v494 = Eq32 <bool> v485 v462
+    If v494 -> b110 b103
+  b110: <- b108
+    Plain -> b89
+  b111: <- b116
+    Plain -> b100
+  b112: <- b102
+    Plain -> b89
+  b113: <- b102
+    (+96) v500 = Eq32 <bool> v499 v462
+    If v500 -> b115 b116
+  b115: <- b113
+    Plain -> b89
+  b116: <- b113
+    (+96) v503 = Eq32 <bool> v502 v462
+    If v503 -> b118 b111
+  b118: <- b116
+    Plain -> b89
+  b120: <- b83 b100
+    (+1976) v508 = Eq32 <bool> v507 v462
+    If v508 -> b129 b122
+  b122: <- b120
+    (1976) v512 = Eq32 <bool> v511 v462
+    If v512 -> b129 b77
+  b127: <- b119 b15
+    (-2079) v1366 = Phi <mem> v880 v278
+    Plain -> b4
+  b128: <- b77
+    (2070) v524 = OffPtr <*ID> [0] v96
+    (+2070) v525 = Load <ID> v524 v452
+    (2070) v529 = StaticCall <*[]*Value,mem> {AuxCall{runtime.mapassign_fast32}} [24] v527 v45 v525 v452
+    (2070) v531 = SelectN <*[]*Value> [0] v529
+    (2070) v530 = SelectN <mem> [1] v529
+    (2070) v532 = NilCheck <void> v531 v530
+    (2070) v262 = Load <**Value> v531 v530
+    (2070) v260 = OffPtr <*int> [8] v531
+    (2070) v258 = OffPtr <*int> [16] v531
+    (2070) v261 = Load <int> v260 v530
+    (2070) v259 = Load <int> v258 v530
+    (2070) v537 = Add64 <int> v261 v126
+    (2070) v538 = Less64U <bool> v259 v537
+    If v538 -> b130 b131 (unlikely)
+  b129: <- b77 b194 b122 b89 b120
+    (+2073) v562 = NilCheck <void> v1332 v452
+    (2073) v563 = OffPtr <*ID> [0] v1332
+    (2073) v564 = Load <ID> v563 v452
+    (2073) v568 = StaticCall <*[]*Value,mem> {AuxCall{runtime.mapassign_fast32}} [24] v527 v25 v564 v452
+    (2073) v570 = SelectN <*[]*Value> [0] v568
+    (2073) v569 = SelectN <mem> [1] v568
+    (2073) v571 = NilCheck <void> v570 v569
+    (2073) v255 = Load <**Value> v570 v569
+    (2073) v1037 = OffPtr <*int> [8] v570
+    (2073) v266 = OffPtr <*int> [16] v570
+    (2073) v254 = Load <int> v1037 v569
+    (2073) v270 = Load <int> v266 v569
+    (2073) v576 = Add64 <int> v254 v126
+    (2073) v577 = Less64U <bool> v270 v576
+    If v577 -> b132 b133 (unlikely)
+  b130: <- b128
+    (2070) v547 = OffPtr <*int> [16] v531
+    (2070) v541 = StaticCall <*uint8,int,int,mem> {AuxCall{runtime.growslice}} [64] v262 v537 v259 v126 v539 v530
+    (2070) v544 = SelectN <**Value> [0] v541
+    (2070) v545 = SelectN <int> [1] v541
+    (2070) v546 = SelectN <int> [2] v541
+    (2070) v542 = SelectN <mem> [3] v541
+    (2070) v962 = Store <mem> {int} v547 v546 v542
+    (2070) v980 = Load <uint32> v290 v962
+    (2070) v978 = Neq32 <bool> v980 v264
+    If v978 -> b192 b182 (unlikely)
+  b131: <- b128 b182
+    (-2070) v550 = Phi <**Value> v262 v544
+    (-2070) v551 = Phi <int> v537 v545
+    (-2070) v553 = Phi <mem> v530 v882
+    (2070) v552 = OffPtr <*int> [8] v531
+    (2070) v556 = Add64 <int> v871 v551
+    (2070) v870 = Lsh64x64 <int> [false] v556 v784
+    (2070) v881 = Store <mem> {int} v552 v551 v553
+    (2070) v858 = Load <uint32> v290 v881
+    (2070) v843 = Neq32 <bool> v858 v264
+    (2070) v557 = AddPtr <**Value> v550 v870
+    If v843 -> b141 b119 (unlikely)
+  b132: <- b129
+    (2073) v586 = OffPtr <*int> [16] v570
+    (2073) v580 = StaticCall <*uint8,int,int,mem> {AuxCall{runtime.growslice}} [64] v255 v576 v270 v126 v539 v569
+    (2073) v583 = SelectN <**Value> [0] v580
+    (2073) v584 = SelectN <int> [1] v580
+    (2073) v585 = SelectN <int> [2] v580
+    (2073) v581 = SelectN <mem> [3] v580
+    (2073) v819 = Store <mem> {int} v586 v585 v581
+    (2073) v741 = Load <uint32> v290 v819
+    (2073) v740 = Neq32 <bool> v741 v264
+    If v740 -> b60 b46 (unlikely)
+  b133: <- b129 b46
+    (-2073) v589 = Phi <**Value> v255 v583
+    (-2073) v590 = Phi <int> v576 v584
+    (-2073) v592 = Phi <mem> v569 v230
+    (2073) v591 = OffPtr <*int> [8] v570
+    (2073) v595 = Add64 <int> v871 v590
+    (2073) v1130 = Lsh64x64 <int> [false] v595 v784
+    (2073) v234 = Store <mem> {int} v591 v590 v592
+    (2073) v753 = Load <uint32> v290 v234
+    (2073) v752 = Neq32 <bool> v753 v264
+    (2073) v596 = AddPtr <**Value> v589 v1130
+    If v752 -> b42 b15 (unlikely)
+  b134: <- b5 b136
+    (-2079) v608 = Phi <int> v47 v984
+    (-2095) v1158 = Phi <mem> v1364 v1033
+    (-2087) v911 = Phi <**Value> v664 v138 (oldSched.ptr[**Value])
+    (-2087) v854 = Phi <int> v47 v125 (oldSched.cap[int])
+    (+2079) v610 = Less64 <bool> v608 v898
+    If v610 -> b135 b137 (likely)
+  b135: <- b134
+    (2079) v987 = Lsh64x64 <int> [false] v608 v784
+    (2079) v615 = AddPtr <**Block> v912 v987
+    (2079) v617 = Load <*Block> v615 v1158 (b[*Block])
+    (+2081) v618 = NilCheck <void> v617 v1158
+    (2081) v619 = OffPtr <*[]*Value> [104] v617
+    (2081) v265 = Load <**Value> v619 v1158
+    (2081) v242 = OffPtr <*int> [112] v617
+    (2081) v287 = OffPtr <*int> [120] v617
+    (2081) v247 = Load <int> v242 v1158
+    (2081) v288 = Load <int> v287 v1158
+    Plain -> b138
+  b136: <- b210
+    (+2079) v984 = Add64 <int> v608 v126
+    Plain -> b134
+  b137: <- b134
+    (+2095) v985 = MakeResult <mem> v1158
+    Ret v985
+  b138: <- b135 b140
+    (-2081) v622 = Phi <int> v47 v676
+    (+2081) v624 = Less64 <bool> v622 v247
+    If v624 -> b139 b196 (likely)
+  b139: <- b138
+    (2082) v635 = InlMark <void> [30362] v1158
+    (+1976) v636 = InlMark <void> [30364] v1158
+    (2081) v825 = Lsh64x64 <int> [false] v622 v784
+    (2081) v629 = AddPtr <**Value> v265 v825
+    (2081) v631 = Load <*Value> v629 v1158 (v[*Value])
+    (+2082) v632 = NilCheck <void> v631 v1158
+    (2082) v633 = OffPtr <*Op> [4] v631
+    (2082) v634 = Load <Op> v633 v1158 (op[Op], op[Op])
+    (+95) v637 = Leq32 <bool> v634 v466
+    If v637 -> b144 b145
+  b140: <- b189 b185 b152 b183
+    (+2085) v676 = Add64 <int> v126 v622 (nfirst[int])
+    Plain -> b138
+  b144: <- b139
+    (-95) v639 = Leq32 <bool> v634 v469
+    If v639 -> b147 b148
+  b145: <- b139
+    (-95) v651 = Leq32 <bool> v634 v485
+    If v651 -> b164 b165
+  b146: <- b149 b155
+    Plain -> b183
+  b147: <- b144
+    (96) v641 = Eq32 <bool> v634 v472
+    If v641 -> b150 b151
+  b148: <- b144
+    (96) v645 = Eq32 <bool> v634 v477
+    If v645 -> b156 b157
+  b149: <- b151
+    Plain -> b146
+  b150: <- b147
+    Plain -> b152
+  b151: <- b147
+    (+96) v643 = Eq32 <bool> v634 v469
+    If v643 -> b154 b149
+  b152: <- b150 b154 b156 b159 b162 b167 b170 b173 b175 b178 b181
+    Plain -> b140
+  b154: <- b151
+    Plain -> b152
+  b155: <- b160
+    Plain -> b146
+  b156: <- b148
+    Plain -> b152
+  b157: <- b148
+    (96) v647 = Eq32 <bool> v634 v480
+    If v647 -> b159 b160
+  b159: <- b157
+    Plain -> b152
+  b160: <- b157
+    (96) v649 = Eq32 <bool> v634 v466
+    If v649 -> b162 b155
+  b162: <- b160
+    Plain -> b152
+  b163: <- b166 b174
+    Plain -> b183
+  b164: <- b145
+    (96) v653 = Eq32 <bool> v634 v488
+    If v653 -> b167 b168
+  b165: <- b145
+    (96) v659 = Eq32 <bool> v634 v496
+    If v659 -> b175 b176
+  b166: <- b171
+    Plain -> b163
+  b167: <- b164
+    Plain -> b152
+  b168: <- b164
+    (+96) v655 = Eq32 <bool> v634 v491
+    If v655 -> b170 b171
+  b170: <- b168
+    Plain -> b152
+  b171: <- b168
+    (+96) v657 = Eq32 <bool> v634 v485
+    If v657 -> b173 b166
+  b173: <- b171
+    Plain -> b152
+  b174: <- b179
+    Plain -> b163
+  b175: <- b165
+    Plain -> b152
+  b176: <- b165
+    (+96) v661 = Eq32 <bool> v634 v499
+    If v661 -> b178 b179
+  b178: <- b176
+    Plain -> b152
+  b179: <- b176
+    (+96) v663 = Eq32 <bool> v634 v502
+    If v663 -> b181 b174
+  b181: <- b179
+    Plain -> b152
+  b183: <- b146 b163
+    (+1976) v666 = Eq32 <bool> v634 v507
+    If v666 -> b140 b185
+  b185: <- b183
+    (1976) v669 = Eq32 <bool> v634 v511
+    If v669 -> b140 b189
+  b189: <- b185
+    (1976) v672 = Eq32 <bool> v634 v515 (~R0[bool])
+    If v672 -> b140 b191
+  b191: <- b189
+    Plain -> b196
+  b196: <- b138 b191
+    (+2087) v704 = IsSliceInBounds <bool> v622 v247
+    If v704 -> b198 b199 (likely)
+  b198: <- b196
+    (2087) v707 = Sub64 <int> v247 v622
+    (2087) v708 = Sub64 <int> v288 v622
+    (2087) v710 = Lsh64x64 <int> [false] v622 v784
+    (2087) v711 = Slicemask <int> v708
+    (2087) v712 = And64 <int> v711 v710
+    (2087) v713 = AddPtr <**Value> v265 v712
+    (2087) v722 = Leq64U <bool> v707 v854
+    If v722 -> b201 b202 (likely)
+  b199: <- b196
+    (2087) v706 = PanicBounds <mem> [6] v622 v247 v1158
+    Exit v706
+  b200: <- b201 b202
+    (-2087) v762 = Phi <mem> v1158 v725
+    (-2087) v138 = Phi <**Value> v911 v460 (oldSched.ptr[**Value])
+    (-2087) v134 = Phi <int> v707 v454 (oldSched.len[int])
+    (-2087) v125 = Phi <int> v854 v447 (oldSched.cap[int])
+    (2087) v763 = StaticCall <int,mem> {AuxCall{runtime.typedslicecopy}} [40] v539 v138 v134 v713 v707 v762
+    (2087) v764 = SelectN <mem> [1] v763
+    (+2088) v279 = OffPtr <*int> [120] v617
+    (+2088) v280 = Load <int> v279 v764
+    (2088) v774 = IsSliceInBounds <bool> v622 v280
+    If v774 -> b205 b204 (likely)
+  b201: <- b198
+    Plain -> b200
+  b202: <- b198
+    (2087) v739 = StaticCall <*uint8,int,int,mem> {AuxCall{runtime.growslice}} [40] v911 v707 v854 v707 v539 v1158
+    (-2087) v460 = SelectN <**Value> [0] v739
+    (-2087) v454 = SelectN <int> [1] v739
+    (-2087) v447 = SelectN <int> [2] v739
+    (-2087) v725 = SelectN <mem> [3] v739
+    Plain -> b200
+  b204: <- b200
+    (2088) v776 = PanicBounds <mem> [4] v622 v280 v764
+    Exit v776
+  b205: <- b200
+    (2088) v788 = OffPtr <*int> [112] v617
+    (2089) v791 = OffPtr <*ID> [0] v617
+    (2089) v448 = OffPtr <*int> [120] v617
+    (2088) v812 = Store <mem> {int} v788 v622 v764
+    (+2089) v792 = Load <ID> v791 v812
+    (2089) v799 = StaticCall <*[]*Value,mem> {AuxCall{runtime.mapaccess1_fast32}} [24] v527 v25 v792 v812
+    (2089) v801 = SelectN <*[]*Value> [0] v799
+    (2089) v800 = SelectN <mem> [1] v799
+    (2089) v237 = Load <**Value> v619 v812
+    (2089) v455 = Load <int> v448 v812
+    (2089) v59 = Load <**Value> v801 v800
+    (2089) v941 = OffPtr <*int> [8] v801
+    (2089) v961 = Load <int> v941 v800
+    (2089) v805 = Add64 <int> v622 v961
+    (2089) v809 = Leq64U <bool> v805 v455
+    If v809 -> b208 b209 (likely)
+  b207: <- b208 b209
+    (-2089) v257 = Phi <**Value> v237 v325
+    (-2089) v253 = Phi <int> v805 v402
+    (-2089) v283 = Phi <int> v455 v398
+    (-2089) v849 = Phi <mem> v800 v114
+    (2089) v837 = Sub64 <int> v253 v622
+    (2089) v838 = Sub64 <int> v283 v622
+    (2089) v839 = Lsh64x64 <int> [false] v622 v784
+    (2089) v840 = Slicemask <int> v838
+    (2089) v841 = And64 <int> v839 v840
+    (2089) v842 = AddPtr <**Value> v257 v841
+    (2089) v860 = OffPtr <*int> [120] v617
+    (2089) v850 = StaticCall <int,mem> {AuxCall{runtime.typedslicecopy}} [40] v539 v842 v837 v59 v961 v849
+    (2089) v851 = SelectN <mem> [1] v850
+    (2089) v856 = Store <mem> {int} v788 v253 v851
+    (2089) v847 = Store <mem> {int} v860 v283 v856
+    (2089) v588 = Load <uint32> v290 v847
+    (2089) v587 = Neq32 <bool> v588 v264
+    If v587 -> b206 b197 (unlikely)
+  b208: <- b205
+    Plain -> b207
+  b209: <- b205
+    (2089) v826 = StaticCall <*uint8,int,int,mem> {AuxCall{runtime.growslice}} [40] v237 v805 v455 v961 v539 v800
+    (-2089) v325 = SelectN <**Value> [0] v826
+    (-2089) v402 = SelectN <int> [1] v826
+    (-2089) v398 = SelectN <int> [2] v826
+    (-2089) v114 = SelectN <mem> [3] v826
+    Plain -> b207
+  b210: <- b197 b193
+    (-2090) v866 = Phi <int> v47 v982
+    (-2090) v1033 = Phi <mem> v846 v834
+    (+2090) v868 = Less64 <bool> v866 v134
+    If v868 -> b211 b136 (likely)
+  b211: <- b210
+    (2090) v864 = Lsh64x64 <int> [false] v866 v784
+    (+2091) v844 = Load <**Value> v619 v1033
+    (-2091) v797 = OffPtr <*int> [112] v617
+    (+2091) v737 = OffPtr <*int> [120] v617
+    (2090) v873 = AddPtr <**Value> v138 v864
+    (2090) v875 = Load <*Value> v873 v1033 (v[*Value])
+    (+2091) v824 = Load <int> v797 v1033
+    (+2091) v757 = Load <int> v737 v1033
+    (2091) v883 = Add64 <int> v824 v126
+    (2091) v884 = Less64U <bool> v757 v883
+    If v884 -> b214 b215 (unlikely)
+  b212: <- b217 b218
+    (-2092) v344 = Phi <**Value> v578 v205
+    (-2092) v340 = Phi <int> v922 v173
+    (-2092) v333 = Phi <int> v1163 v168
+    (-2092) v966 = Phi <mem> v917 v195
+    (2092) v954 = Sub64 <int> v340 v566
+    (2092) v955 = Sub64 <int> v333 v566
+    (2092) v956 = Lsh64x64 <int> [false] v566 v784
+    (2092) v957 = Slicemask <int> v955
+    (2092) v958 = And64 <int> v956 v957
+    (2092) v959 = AddPtr <**Value> v344 v958
+    (+2090) v982 = Add64 <int> v866 v126
+    (2092) v967 = StaticCall <int,mem> {AuxCall{runtime.typedslicecopy}} [40] v539 v959 v954 v852 v1179 v966
+    (2092) v968 = SelectN <mem> [1] v967
+    (2092) v845 = Store <mem> {int} v788 v340 v968
+    (2092) v836 = Store <mem> {int} v860 v333 v845
+    (2092) v413 = Load <uint32> v290 v836
+    (2092) v307 = Neq32 <bool> v413 v264
+    If v307 -> b195 b193 (unlikely)
+  b214: <- b211
+    (2091) v887 = StaticCall <*uint8,int,int,mem> {AuxCall{runtime.growslice}} [64] v844 v883 v757 v126 v539 v1033
+    (2091) v890 = SelectN <**Value> [0] v887
+    (2091) v891 = SelectN <int> [1] v887
+    (2091) v892 = SelectN <int> [2] v887
+    (2091) v888 = SelectN <mem> [3] v887
+    (2091) v804 = Store <mem> {int} v860 v892 v888
+    (2091) v761 = Load <uint32> v290 v804
+    (2091) v335 = Neq32 <bool> v761 v264
+    If v335 -> b17 b216 (unlikely)
+  b215: <- b211 b216
+    (-2091) v896 = Phi <**Value> v844 v890
+    (-2091) v897 = Phi <int> v883 v891
+    (-2091) v899 = Phi <mem> v1033 v807
+    (2091) v902 = Add64 <int> v897 v871
+    (2092) v907 = OffPtr <*ID> [0] v875
+    (2091) v830 = Lsh64x64 <int> [false] v902 v784
+    (2092) v123 = OffPtr <*int> [112] v617
+    (2092) v831 = OffPtr <*int> [120] v617
+    (2091) v803 = Store <mem> {int} v788 v897 v899
+    (2091) v148 = Load <uint32> v290 v803
+    (2091) v144 = Neq32 <bool> v148 v264
+    (2091) v903 = AddPtr <**Value> v896 v830
+    If v144 -> b213 b190 (unlikely)
+  b217: <- b190
+    Plain -> b212
+  b218: <- b190
+    (2092) v943 = StaticCall <*uint8,int,int,mem> {AuxCall{runtime.growslice}} [40] v578 v922 v1163 v1179 v539 v917
+    (-2092) v205 = SelectN <**Value> [0] v943
+    (-2092) v173 = SelectN <int> [1] v943
+    (-2092) v168 = SelectN <int> [2] v943
+    (-2092) v195 = SelectN <mem> [3] v943
+    Plain -> b212
+  b203: <- b27
+    (+2066) v934 = WB <*uintptr,mem> [2] v70
+    (+2066) v813 = Select0 <*uintptr> v934
+    (+2066) v779 = Select1 <mem> v934
+    (+2066) v919 = OffPtr <*uintptr> [0] v813
+    (+2066) v913 = Store <mem> {uintptr} v919 v1332 v779
+    (+2066) v905 = Load <uintptr> v79 v913
+    (+2066) v900 = OffPtr <*uintptr> [8] v813
+    (+2066) v895 = Store <mem> {uintptr} v900 v905 v913
+    Plain -> b194
+  b194: <- b27 b203
+    (-2066) v894 = Phi <mem> v70 v895
+    (+2066) v889 = Store <mem> {*Block} v79 v1332 v894
+    (-2066) v963 = WBend <mem> v889
+    (+2067) v451 = StaticCall <mem> {AuxCall{cmd/compile/internal/ssa.(*Value).AddArg}} [16] v73 v1300 v963
+    (2067) v452 = SelectN <mem> [0] v451
+    (+2068) v456 = Load <*Block> v169 v452
+    (2068) v457 = EqPtr <bool> v1332 v456
+    If v457 -> b78 b129
+  b192: <- b130
+    (2070) v975 = WB <*uintptr,mem> [2] v962
+    (2070) v960 = Select0 <*uintptr> v975
+    (2070) v950 = Select1 <mem> v975
+    (2070) v946 = OffPtr <*uintptr> [0] v960
+    (2070) v879 = Store <mem> {uintptr} v946 v544 v950
+    (2070) v828 = Load <uintptr> v531 v879
+    (2070) v827 = OffPtr <*uintptr> [8] v960
+    (2070) v817 = Store <mem> {uintptr} v827 v828 v879
+    Plain -> b182
+  b182: <- b130 b192
+    (-2070) v863 = Phi <mem> v962 v817
+    (2070) v861 = Store <mem> {**Value} v531 v544 v863
+    (-2070) v882 = WBend <mem> v861
+    Plain -> b131
+  b141: <- b131
+    (2070) v833 = WB <*uintptr,mem> [2] v881
+    (2070) v829 = Select0 <*uintptr> v833
+    (2070) v885 = Select1 <mem> v833
+    (2070) v914 = OffPtr <*uintptr> [0] v829
+    (2070) v231 = Store <mem> {uintptr} v914 v73 v885
+    (2070) v232 = Load <uintptr> v557 v231
+    (2070) v802 = OffPtr <*uintptr> [8] v829
+    (2070) v796 = Store <mem> {uintptr} v802 v232 v231
+    Plain -> b119
+  b119: <- b131 b141
+    (-2070) v789 = Phi <mem> v881 v796
+    (2070) v782 = Store <mem> {*Value} v557 v73 v789
+    (-2070) v880 = WBend <mem> v782
+    Plain -> b127
+  b60: <- b132
+    (2073) v730 = WB <*uintptr,mem> [2] v819
+    (2073) v694 = Select0 <*uintptr> v730
+    (2073) v604 = Select1 <mem> v730
+    (2073) v284 = OffPtr <*uintptr> [0] v694
+    (2073) v285 = Store <mem> {uintptr} v284 v583 v604
+    (2073) v286 = Load <uintptr> v570 v285
+    (2073) v769 = OffPtr <*uintptr> [8] v694
+    (2073) v756 = Store <mem> {uintptr} v769 v286 v285
+    Plain -> b46
+  b46: <- b132 b60
+    (-2073) v755 = Phi <mem> v819 v756
+    (2073) v754 = Store <mem> {**Value} v570 v583 v755
+    (-2073) v230 = WBend <mem> v754
+    Plain -> b133
+  b42: <- b133
+    (2073) v751 = WB <*uintptr,mem> [2] v234
+    (2073) v750 = Select0 <*uintptr> v751
+    (2073) v746 = Select1 <mem> v751
+    (2073) v742 = OffPtr <*uintptr> [0] v750
+    (2073) v714 = Store <mem> {uintptr} v742 v73 v746
+    (2073) v620 = Load <uintptr> v596 v714
+    (2073) v877 = OffPtr <*uintptr> [8] v750
+    (2073) v1129 = Store <mem> {uintptr} v877 v620 v714
+    Plain -> b15
+  b15: <- b133 b42
+    (-2073) v598 = Phi <mem> v234 v1129
+    (2073) v593 = Store <mem> {*Value} v596 v73 v598
+    (-2073) v278 = WBend <mem> v593
+    Plain -> b127
+  b206: <- b207
+    (2089) v582 = WB <*uintptr,mem> [2] v847
+    (2089) v559 = Select0 <*uintptr> v582
+    (2089) v554 = Select1 <mem> v582
+    (2089) v549 = OffPtr <*uintptr> [0] v559
+    (2089) v548 = Store <mem> {uintptr} v549 v257 v554
+    (2089) v543 = Load <uintptr> v619 v548
+    (2089) v572 = OffPtr <*uintptr> [8] v559
+    (2089) v533 = Store <mem> {uintptr} v572 v543 v548
+    Plain -> b197
+  b197: <- b207 b206
+    (-2089) v291 = Phi <mem> v847 v533
+    (2089) v292 = Store <mem> {**Value} v619 v257 v291
+    (-2089) v846 = WBend <mem> v292
+    Plain -> b210
+  b195: <- b212
+    (2092) v308 = WB <*uintptr,mem> [2] v836
+    (2092) v367 = Select0 <*uintptr> v308
+    (2092) v346 = Select1 <mem> v308
+    (2092) v347 = OffPtr <*uintptr> [0] v367
+    (2092) v400 = Store <mem> {uintptr} v347 v344 v346
+    (2092) v1094 = Load <uintptr> v619 v400
+    (2092) v678 = OffPtr <*uintptr> [8] v367
+    (2092) v348 = Store <mem> {uintptr} v678 v1094 v400
+    Plain -> b193
+  b193: <- b212 b195
+    (-2092) v342 = Phi <mem> v836 v348
+    (2092) v745 = Store <mem> {**Value} v619 v344 v342
+    (-2092) v834 = WBend <mem> v745
+    Plain -> b210
+  b17: <- b214
+    (2091) v449 = WB <*uintptr,mem> [2] v804
+    (2091) v736 = Select0 <*uintptr> v449
+    (2091) v795 = Select1 <mem> v449
+    (2091) v207 = OffPtr <*uintptr> [0] v736
+    (2091) v162 = Store <mem> {uintptr} v207 v890 v795
+    (2091) v161 = Load <uintptr> v619 v162
+    (2091) v855 = OffPtr <*uintptr> [8] v736
+    (2091) v859 = Store <mem> {uintptr} v855 v161 v162
+    Plain -> b216
+  b216: <- b214 b17
+    (-2091) v865 = Phi <mem> v804 v859
+    (2091) v149 = Store <mem> {**Value} v619 v890 v865
+    (-2091) v807 = WBend <mem> v149
+    Plain -> b215
+  b213: <- b215
+    (2091) v137 = WB <*uintptr,mem> [2] v803
+    (2091) v133 = Select0 <*uintptr> v137
+    (2091) v128 = Select1 <mem> v137
+    (2091) v124 = OffPtr <*uintptr> [0] v133
+    (2091) v117 = Store <mem> {uintptr} v124 v875 v128
+    (2091) v113 = Load <uintptr> v903 v117
+    (2091) v102 = OffPtr <*uintptr> [8] v133
+    (2091) v821 = Store <mem> {uintptr} v102 v113 v117
+    Plain -> b190
+  b190: <- b215 b213
+    (-2091) v823 = Phi <mem> v803 v821
+    (2091) v178 = Store <mem> {*Value} v903 v875 v823
+    (-2091) v787 = WBend <mem> v178
+    (+2092) v906 = NilCheck <void> v875 v787
+    (2092) v908 = Load <ID> v907 v787
+    (2092) v578 = Load <**Value> v619 v787
+    (2092) v566 = Load <int> v123 v787
+    (2092) v1163 = Load <int> v831 v787
+    (2092) v916 = StaticCall <*[]*Value,mem> {AuxCall{runtime.mapaccess1_fast32}} [24] v527 v45 v908 v787
+    (2092) v918 = SelectN <*[]*Value> [0] v916
+    (2092) v1160 = OffPtr <*int> [8] v918
+    (2092) v917 = SelectN <mem> [1] v916
+    (2092) v852 = Load <**Value> v918 v917
+    (2092) v1179 = Load <int> v1160 v917
+    (2092) v922 = Add64 <int> v566 v1179
+    (2092) v926 = Leq64U <bool> v922 v1163
+    If v926 -> b217 b218 (likely)
+name s[*regAllocState]: [v5]
+name start[map[ID][]*Value]: [v25]
+name after[map[ID][]*Value]: [v45]
+name i[int]: [v52]
+name spill[*Value]: [v73]
+name v[*Value]: [v96]
+name best[*Block]: [v170 v299 v1332 v1337 v1339 v1340 v1341]
+name bestArg[*Value]: [v96 v1300 v1306 v1308 v1309 v1310]
+name bestDepth[int16]: [v171 v197 v1276 v328 v1277 v1278 v1279 v1280 v1281]
+name l[*loop]: [v190]
+name b[*Block]: [v170 v1359 v81 v223 v299]
+name i[int]: [v47 v199 v1294 v298 v443]
+name p[*Block]: [v1359]
+name ~R0[bool]: [v672]
+name x[*Block]: [v1359]
+name ~R0[*Block]: [v221]
+name c[*Block]: [v221 v223 v295]
+name x[*Block]: [v223]
+name ~R0[*Block]: [v295]
+name depth[int16]: [v171 v327 v328]
+name l[*loop]: [v321]
+name op[Op]: [v462]
+name op[Op]: [v462]
+name ~R0[bool]: [v516]
+name v[*Value]: [v875]
+name b[*Block]: [v617]
+name nfirst[int]: [v47 v676]
+name v[*Value]: [v631]
+name op[Op]: [v634]
+name op[Op]: [v634]
+name t.ptr[*SparseTreeNode]: [v848]
+name t.len[int]: [v835]
+name oldSched.ptr[**Value]: [v664 v911 v138]
+name oldSched.len[int]: [v47 v134]
+name oldSched.cap[int]: [v47 v854 v125]

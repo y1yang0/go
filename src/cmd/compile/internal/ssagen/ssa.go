@@ -51,8 +51,8 @@ func DumpInline(fn *ir.Func) {
 }
 
 func InitEnv() {
-	ssaDump = os.Getenv("GOSSAFUNC")
-	ssaDir = os.Getenv("GOSSADIR")
+	ssaDump = "Rel:hoist loop invariant" //os.Getenv("GOSSAFUNC")
+	ssaDir = "/home/qingfeng.yy/data"    //os.Getenv("GOSSADIR")
 	if ssaDump != "" {
 		if strings.HasSuffix(ssaDump, "+") {
 			ssaDump = ssaDump[:len(ssaDump)-1]
