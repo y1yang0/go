@@ -178,6 +178,17 @@ func (t SparseTree) Child(x *Block) *Block {
 	return t[x.ID].child
 }
 
+func (t SparseTree) Children(x *Block) []*Block {
+	children := make([]*Block, 0)
+	if x == nil {
+		return children
+	}
+	child := t.Child(x)
+	children = append(children, child)
+	children = append(children, t.Children(child)...)
+	return children
+}
+
 // Parent returns the parent of x in the dominator tree, or
 // nil if x is the function's entry.
 func (t SparseTree) Parent(x *Block) *Block {

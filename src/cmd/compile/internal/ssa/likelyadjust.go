@@ -4,26 +4,27 @@
 
 package ssa
 
-import (
-	"fmt"
-)
+import "fmt"
 
 type loop struct {
 	header *Block // The header node of this (reducible) loop
-	outer  *loop  // loop containing this loop
+	guard  *Block // Additional check to ensure loop executed at least once
+	exit   *Block // The unique exit block of this loop, if any
+	latch  *Block // Source of backedge, where increment happens
+	body   *Block // The first loop body, near to the header
+	land   *Block // Safe land block to place instructions after rotation
+	outer  *loop  // Outer loop containing this loop
 
 	// By default, children, exits, and depth are not initialized.
 	children []*loop  // loops nested directly within this loop. Initialized by assembleChildren().
 	exits    []*Block // exits records blocks reached by exits from this loop. Initialized by findExits().
 
-	// Next three fields used by regalloc and/or
+	// Next four fields used by regalloc and/or
 	// aid in computation of inner-ness and list of blocks.
-	nBlocks int32 // Number of blocks in this loop but not within inner loops
-	depth   int16 // Nesting depth of the loop; 1 is outermost. Initialized by calculateDepths().
-	isInner bool  // True if never discovered to contain a loop
-
-	// register allocation uses this.
-	containsUnavoidableCall bool // True if all paths through the loop have a call
+	nBlocks                 int32 // Number of blocks in this loop but not within inner loops
+	depth                   int16 // Nesting depth of the loop; 1 is outermost. Initialized by calculateDepths().
+	isInner                 bool  // True if never discovered to contain a loop
+	containsUnavoidableCall bool  // True if all paths through the loop have a call
 }
 
 // outerinner records that outer contains inner
@@ -63,7 +64,7 @@ func checkContainsCall(bb *Block) bool {
 
 type loopnest struct {
 	f              *Func
-	b2l            []*loop
+	b2l            []*loop // block id to loop mapping
 	po             []*Block
 	sdom           SparseTree
 	loops          []*loop
@@ -236,21 +237,35 @@ func likelyadjust(f *Func) {
 }
 
 func (l *loop) String() string {
-	return fmt.Sprintf("hdr:%s", l.header)
+	return fmt.Sprintf("Loop@%s", l.header)
 }
 
-func (l *loop) LongString() string {
-	i := ""
-	o := ""
-	if l.isInner {
-		i = ", INNER"
+func (loop *loop) LongString() string {
+	// Loop: loop header
+	// B: loop body
+	// E: loop exit
+	// L: loop latch
+	// G: loop guard
+	//
+	// * denotes main loop exit
+	if len(loop.exits) == 1 {
+		return fmt.Sprintf("Loop@%v(B@%v E@%v L@%v G@%v)",
+			loop.header, loop.body, loop.exit, loop.latch, loop.guard)
+	} else {
+		s := ""
+		for i, exit := range loop.exits {
+			s += exit.String()
+			if exit == loop.exit {
+				s += "*"
+			}
+			if i != len(loop.exits)-1 {
+				s += " "
+			}
+		}
+		return fmt.Sprintf("Loop@%v(B@%v E@(%v) L@%v G@%v)",
+			loop.header, loop.body, s, loop.latch, loop.guard)
 	}
-	if l.outer != nil {
-		o = ", o=" + l.outer.header.String()
-	}
-	return fmt.Sprintf("hdr:%s%s%s", l.header, i, o)
 }
-
 func (l *loop) isWithinOrEq(ll *loop) bool {
 	if ll == nil { // nil means whole program
 		return true
@@ -521,14 +536,22 @@ func (ln *loopnest) findExits() {
 	b2l := ln.b2l
 	for _, b := range ln.po {
 		l := b2l[b.ID]
-		if l != nil && len(b.Succs) == 2 {
-			sl := b2l[b.Succs[0].b.ID]
-			if recordIfExit(l, sl, b.Succs[0].b) {
-				continue
-			}
-			sl = b2l[b.Succs[1].b.ID]
-			if recordIfExit(l, sl, b.Succs[1].b) {
-				continue
+		if l != nil {
+			if len(b.Succs) == 2 {
+				sl := b2l[b.Succs[0].b.ID]
+				if recordExit(l, sl, b.Succs[0].b) {
+					continue
+				}
+				sl = b2l[b.Succs[1].b.ID]
+				if recordExit(l, sl, b.Succs[1].b) {
+					continue
+				}
+			} else if len(b.Succs) > 2 { // JumpTable
+				assert(b.Kind == BlockJumpTable, "why not otherwise")
+				for _, s := range b.Succs {
+					sl := b2l[s.b.ID]
+					recordExit(l, sl, s.b)
+				}
 			}
 		}
 	}
@@ -543,10 +566,10 @@ func (ln *loopnest) depth(b ID) int16 {
 	return 0
 }
 
-// recordIfExit checks sl (the loop containing b) to see if it
+// recordExit checks sl (the loop containing b) to see if it
 // is outside of loop l, and if so, records b as an exit block
 // from l and returns true.
-func recordIfExit(l, sl *loop, b *Block) bool {
+func recordExit(l, sl *loop, b *Block) bool {
 	if sl != l {
 		if sl == nil || sl.depth <= l.depth {
 			l.exits = append(l.exits, b)
@@ -577,4 +600,46 @@ func (l *loop) setDepth(d int16) {
 // going back to header
 func (l *loop) iterationEnd(b *Block, b2l []*loop) bool {
 	return b == l.header || b2l[b.ID] == nil || (b2l[b.ID] != l && b2l[b.ID].depth <= l.depth)
+}
+
+// contains checks if receiver loop contains inner loop in any depth
+func (loop *loop) contains(inner *loop) bool {
+	// Find from current loop
+	for _, child := range loop.children {
+		if child == inner {
+			return true
+		}
+	}
+	// Find from child of current loop
+	for _, child := range loop.children {
+		if child.contains(inner) {
+			return true
+		}
+	}
+	return false
+}
+
+// findLoopBlocks returnss all basic blocks, including those contained in nested loops.
+func (ln *loopnest) findLoopBlocks(loop *loop) []*Block {
+	ln.assembleChildren()
+	loopBlocks := make([]*Block, 0)
+	for id, tloop := range ln.b2l {
+		if tloop == nil {
+			continue
+		}
+		if tloop == loop {
+			// Find block by id and append it
+			for _, block := range ln.f.Blocks {
+				if int32(block.ID) == int32(id) {
+					loopBlocks = append(loopBlocks, block)
+					break
+				}
+			}
+		} else if loop.contains(tloop) {
+			// Otherwise, check if this block is within inner loops
+			blocks := ln.findLoopBlocks(tloop)
+			loopBlocks = append(loopBlocks, blocks...)
+		}
+	}
+	return loopBlocks
 }
