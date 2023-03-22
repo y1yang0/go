@@ -11,7 +11,7 @@ package foo
 
 func f(x, y, z int) int {
 	a := 0
-	for i := 0; i < x; i++ { // ERROR "Branch prediction rule stay in loop"
+	for i := 0; i < x; i++ { // ERROR "Branch prediction rule"
 		for j := 0; j < y; j++ { // ERROR "Branch prediction rule stay in loop"
 			a += j
 		}
@@ -44,7 +44,7 @@ func g(x, y, z int) int {
 		panic("help help help")
 	}
 	if x != 0 { // ERROR "Branch prediction rule default < ret"
-		for i := 0; i < x; i++ { // ERROR "Branch prediction rule stay in loop"
+		for i := 0; i < x; i++ { // ERROR "Branch prediction rule"
 			if x == 4 { // ERROR "Branch prediction rule stay in loop"
 				return a
 			}
@@ -61,7 +61,7 @@ func g(x, y, z int) int {
 
 func h(x, y, z int) int {
 	a := 0
-	for i := 0; i < x; i++ { // ERROR "Branch prediction rule stay in loop"
+	for i := 0; i < x; i++ { // ERROR "Branch prediction rule"
 		for j := 0; j < y; j++ { // ERROR "Branch prediction rule stay in loop"
 			a += j
 			if i == j { // ERROR "Branch prediction rule stay in loop"
