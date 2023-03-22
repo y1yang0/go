@@ -4,8 +4,470 @@
 
 package ssa
 
-// loopRotate converts loops with a check-loop-condition-at-beginning
-// to loops with a check-loop-condition-at-end.
+import (
+	"fmt"
+)
+
+// ----------------------------------------------------------------------------
+// Loop Rotation
+//
+// Loop rotation transforms while/for loop to do-while style loop. The original
+// natural loop is in form of below shape
+//
+//	   entry
+//	     │
+//	     │
+//	     │  ┌───loop latch
+//	     ▼  ▼       ▲
+//	loop header     │
+//	     │  │       │
+//	     │  └──►loop body
+//	     │
+//	     ▼
+//	 loop exit
+//
+// In the terminology, loop entry governs the entire loop, loop header contains
+// the loop conditional test, loop body refers to the code that is repeated, loop
+// latch contains the backedge to loop header, for simple loops, the loop body is
+// equal to loop latch, and loop exit refers to the single block that dominates
+// the entire loop.
+// We rotate the conditional test from loop header to loop latch. And loop latch
+// determines whether loop continues or exits based on incoming this test.
+//
+//	  entry
+//	    │
+//	    │
+//	    │
+//	    ▼
+//	loop header◄──┐
+//	    │         │
+//	    │         │
+//	    │         │
+//	    ▼         │
+//	loop body     │
+//	    │         │
+//	    │         │
+//	    │         │
+//	    ▼         │
+//	loop latch────┘
+//	    │
+//	    │
+//	    │
+//	    ▼
+//	loop exit
+//
+// Now loop header and loop body are executed unconditionally, this may changes
+// program semantics while original program executes them only if test is okay.
+// An additional loop guard is required to ensure this.
+//
+//	    entry
+//	      │
+//	      │
+//	      │
+//	      ▼
+//	  loop guard
+//	   │  │
+//	   │  │
+//	   │  │  ┌────┐
+//	┌──┘  │  │    │
+//	│     ▼  ▼    │
+//	│ loop header │
+//	│     │       │
+//	│     │       │
+//	│     │       │
+//	│     ▼       │
+//	│ loop body   │
+//	│     │       │
+//	│     │       │
+//	│     │       │
+//	│     ▼       │
+//	│ loop latch  │
+//	│     │  │    │
+//	│     │  │    │
+//	└──┐  │  └────┘
+//	   │  │
+//	   ▼  ▼
+//	  loop exit
+//
+// The detailed algorithm is summarized as following steps
+// TODO: WRITE DETAILED ALGORITHM STEPS
+// TODO: ADD MINIMAL SSA OR CODE DIFF(before and after loop rotation)
+
+func (loop *loop) FullString() string {
+	// Loop: loop header, B: loop body, E: loop exit, L: loop latch, G: loop guard
+	return fmt.Sprintf("Loop@%v(B@%v E@%v L@%v G@%v)",
+		loop.header, loop.body, loop.exit, loop.latch, loop.guard)
+}
+
+func (ln *loopnest) checkLoopForm(loop *loop) string {
+	ln.findExits() // initialize loop exits
+
+	loopHeader := loop.header
+	// loopHeader <- entry(0), loopLatch(1)?
+	if len(loopHeader.Preds) != 2 {
+		return "loop header requires 2 predecessors"
+	}
+	// loopHeader -> loopBody(0), loopExit(1) ?
+	if loopHeader.Kind != BlockIf {
+		return "loop header must be BlockIf"
+	}
+	loopExit := loop.header.Succs[1].b
+	if len(loopExit.Preds) != 1 {
+		// TODO: Maybe this is too strict
+		return "loop exit requries 1 predecessor"
+	}
+
+	if len(loop.exits) != 1 {
+		// FIXME: This is definitively too strict
+		return "loop exit more than one."
+	}
+
+	illForm := true
+	for _, exit := range loop.exits {
+		if exit == loopExit {
+			illForm = false
+			break
+		}
+	}
+	if illForm {
+		// TODO: Maybe this is too strict
+		return "loop exit is invalid"
+	}
+
+	cond := loopHeader.Controls[0]
+	entry := ln.sdom.Parent(loopHeader)
+	for _, arg := range cond.Args {
+		// skip cases we couldn't create phi node. like use method calls' result as loop condition.
+		if ln.sdom.IsAncestorEq(arg.Block, entry) || arg.Op == OpPhi {
+			continue
+		}
+		return fmt.Sprintf("loop use method calls as cond. %s in block: %s", arg.LongString(), arg.Block.String())
+	}
+	return ""
+}
+
+// moveCond moves conditional test from loop header to loop latch
+func (loop *loop) moveCond() *Value {
+	cond := loop.header.Controls[0]
+	if cond.Op == OpPhi {
+		// In rare case, conditional test is Phi, we can't move it to loop latch
+		return cond
+	}
+	for valIdx, v := range cond.Block.Values {
+		if cond != v {
+			continue
+		}
+		cond.moveTo(loop.latch, valIdx)
+		break
+	}
+	return cond
+}
+
+// Update uses of conditional test once guardCond is derived from it
+// TODO: Maybe mergeLoopUse already covers this?
+func (loop *loop) updateCond(cond *Value) {
+	// In original while/for loop, a critical edge is inserted at the end of each
+	// iteration, and Phi values are updated. All subsequent uses of Phi rely on
+	// the updated values. However, when converted to a do-while loop, Phi nodes
+	// may be used at the end of each iteration before they are updated.
+	// Therefore, we need to replace all subsequent uses of Phi with the use of
+	// Phi parameter. This way, it is equivalent to using the updated values of
+	// Phi values. Here is an simple example:
+	//
+	// Before
+	//	 loop header:
+	//	 v6 = Phi v5 v19
+	//	 v8 = IsNonNil v6
+	//	 If v8 -> loop latch, loop exit
+	//
+	//	 loop latch:
+	//	 ...
+	//	 v19 = Load ptr mem
+	//	 Plain -> loop header
+	//
+	// After
+	//	 loop header:
+	//	 v6 = Phi v5 v19
+	//	 Plain → loop latch
+	//
+	//	 loop latch:
+	//	 ...
+	//	 v19 = Load ptr mem
+	//	 v8 = IsNonNil v6
+	//	 If v8 → loop header, loop exit
+	//
+	// After loop rotation, v8 should use v19 instead of un-updated v6 otherwise
+	// it will lose one update. The same occurrence also happens in mergeLoopUse.
+	for idx, use := range cond.Args {
+		if use.Op == OpPhi && use.Block == loop.header {
+			// loopHeader <- entry(0), loopLatch(1)
+			newUse := use.Args[1]
+			cond.SetArg(idx, newUse)
+		}
+	}
+}
+
+// rewireLoopHeader rewires the loop CFG to the following shape:
+//
+//	loopHeader -> loopBody
+func (loop *loop) rewireLoopHeader() {
+	loopHeader := loop.header
+
+	loopHeader.Kind = BlockPlain
+	loopHeader.Likely = BranchUnknown
+	loopHeader.ResetControls()
+	var edge Edge
+	for _, succ := range loopHeader.Succs {
+		if succ.b == loop.body {
+			edge = succ
+			break
+		}
+	}
+	loopHeader.Succs = loopHeader.Succs[:1]
+	loopHeader.Succs[0] = edge
+}
+
+// rewireLoopLatch rewires the loop CFG to the following shape:
+//
+//	loopLatch -> loopHeader(0), loopExit(1)
+func (loop *loop) rewireLoopLatch(ctrl *Value) {
+	loopExit := loop.exit
+	loopLatch := loop.latch
+
+	loopLatch.Kind = BlockIf
+	loopLatch.SetControl(ctrl)
+	var idx int
+	for i := 0; i < len(loopExit.Preds); i++ {
+		if loopExit.Preds[i].b == loop.header {
+			idx = i
+			break
+		}
+	}
+	loopLatch.Succs = append(loopLatch.Succs, Edge{loopExit, idx})
+	loopExit.Preds[idx] = Edge{loopLatch, 1}
+}
+
+// rewireLoopGuard rewires the loop CFG to the following shape:
+//
+//	loopGuard -> loopHeader(0), loopExit(1)
+func (loop *loop) rewireLoopGuard(sdom SparseTree, guardCond *Value) {
+	loopHeader := loop.header
+	loopGuard := loop.guard
+	entry := sdom.Parent(loopHeader)
+
+	loopGuard.Likely = BranchLikely // loop is prefer to be executed at least once
+	loopGuard.SetControl(guardCond)
+	var idx int
+	for i := 0; i < len(loopHeader.Preds); i++ {
+		if loopHeader.Preds[i].b == entry {
+			idx = i
+			break
+		}
+	}
+	loopGuard.Succs = append(loopGuard.Succs, Edge{loopHeader, idx})
+	loopGuard.AddEdgeTo(loop.exit)
+	loopHeader.Preds[idx] = Edge{loopGuard, 0}
+}
+
+// rewireLoopEntry rewires the loop CFG to the following shape:
+//
+//	loopEntry -> loopGuard
+func (loop *loop) rewireLoopEntry(sdom SparseTree, loopGuard *Block) {
+	entry := sdom.Parent(loop.header)
+	entry.Succs = entry.Succs[:0]
+	entry.AddEdgeTo(loopGuard)
+}
+
+// createLoopGuard creates loop guard and wires loop CFG to the following shape:
+//
+//	loopEntry -> loopGuard
+//	loopGuard -> loopHeader(0), loopExit(1)
+func (loop *loop) createLoopGuard(ln *loopnest, cond *Value) {
+	// Create loop guard block
+	// TODO: insert loop guard before loop header in block order
+	// TODO: once we created loop guard, we need to update b2l mapping, because
+	// we may use it later(in mergeLoopUse)
+	loopGuard := ln.f.NewBlock(BlockIf)
+	loop.guard = loopGuard
+	sdom := ln.f.Sdom()
+
+	// Rewire entry to loop guard instead of original loop header
+	loop.rewireLoopEntry(sdom, loopGuard)
+
+	// Create conditional test for loop guard based on existing conditional test
+	// TODO: If loop guard is already exists, dont insert duplicate one
+	// TODO: If this is inner loop, dont insert loop guard
+	// TODO: Update new cond aux info such as variable name
+	var guardCond *Value
+	if cond.Op != OpPhi {
+		// Normal case, e.g. If (Less64 v1 v2) -> loop header, loop exit
+		guardCond = loopGuard.NewValue0IA(cond.Pos, cond.Op, cond.Type, cond.AuxInt, cond.Aux)
+		newArgs := make([]*Value, 0, len(cond.Args))
+		for _, arg := range cond.Args {
+			newArg := arg
+			// All uses of conditional test should be dominated by test itself, which
+			// implies that they should either be located at loopHeader or in a block
+			// that is dominated by loopHeader. For the latter case, no further action
+			// is needed as it can directly be used as the argument for guardCond
+			// For the former case, we need to handle it specially based on the type
+			// of the value. For example, we lookup incoming value of Phi as argument
+			// of guardCond
+			if arg.Block == loop.header && arg.Op == OpPhi {
+				newArg = arg.Args[0]
+			}
+			if !sdom.IsAncestorEq(newArg.Block, cond.Block) {
+				panic("new argument of guard cond must dominate old cond")
+			}
+			newArgs = append(newArgs, newArg)
+		}
+		guardCond.AddArgs(newArgs...)
+	} else {
+		// Rare case, If (Phi v1 v2) -> loop header, loop exit
+		entryArg := cond.Args[0]
+		guardCond = entryArg
+		if !sdom.IsAncestorEq(entryArg.Block, loop.header) {
+			panic("arg of Phi cond must dominate loop header")
+		}
+	}
+
+	// Rewire loop guard to original loop header and loop exit
+	loop.rewireLoopGuard(ln.f.Sdom(), guardCond)
+}
+
+func (loop *loop) collectLoopUse(ln *loopnest) (map[*Value][]*Block, bool) {
+	defUses := make(map[*Value][]*Block)
+	bad := make(map[*Value]bool)
+	sdom := ln.f.Sdom()
+	for _, val := range loop.header.Values {
+		if val.Op == OpPhi {
+			defUses[val] = make([]*Block, 0, val.Uses)
+		} else {
+			bad[val] = true
+		}
+	}
+
+	// TODO: beautify below code
+	for _, block := range ln.f.Blocks {
+		for _, val := range block.Values {
+			for idx, arg := range val.Args {
+				if _, exist := defUses[arg]; exist {
+					if sdom.IsAncestorEq(loop.exit, block) {
+						defUses[arg] = append(defUses[arg], val.Block)
+					} else if val.Op == OpPhi && sdom.IsAncestorEq(loop.exit, block.Preds[idx].b) {
+						defUses[arg] = append(defUses[arg], val.Block)
+					}
+				} else if _, exist := bad[arg]; exist {
+					// Use value other than Phi? We are incapable of handling
+					// this case, so we bail out
+					return nil, true
+				}
+			}
+		}
+		if sdom.IsAncestorEq(loop.exit, block) {
+			for _, ctrl := range block.ControlValues() {
+				if _, exist := defUses[ctrl]; exist {
+					defUses[ctrl] = append(defUses[ctrl], block)
+				} else if _, exist := bad[ctrl]; exist {
+					// Use value other than Phi? We are incapable of handling
+					// this case, so we bail out
+					return nil, true
+				}
+			}
+		}
+	}
+	//fmt.Printf("==use %v\n", defUses)
+	return defUses, false
+}
+
+// If the basic block following the loop has value dependencies on the values
+// defined within the current loop, it is necessary to create a Phi at the loop
+// exit and use it to replace the values defined within the loop. This is because
+// after inserting the loop guard, the loop may not always dominate the loop exit,
+// loop exit merges control flows from loop guard and loop latch.
+func (loop *loop) mergeLoopUse(ln *loopnest, deps map[*Value][]*Block) {
+	sdom := ln.f.Sdom()
+	// For above collected Value dependencies, create Phi to merge incoming Value
+	for dep, blocks := range deps {
+		if len(blocks) == 0 {
+			continue
+		}
+		phi := loop.exit.Func.newValueNoBlock(OpPhi, dep.Type, dep.Pos)
+		if len(dep.Block.Preds) != 2 {
+			fmt.Printf("loop header must be 2 pred %v %v\n", dep, loop.FullString())
+			panic("loop header must be 2 pred ")
+		}
+		var phiArgs [2]*Value
+		// loopExit <- loopLatch(0), loopGuard(1)
+		for k := 0; k < len(dep.Block.Preds); k++ {
+			// argument block of use must dominate loopGuard
+			if sdom.IsAncestorEq(dep.Block.Preds[k].b, loop.guard) {
+				phiArgs[1] = dep.Args[k]
+			} else {
+				phiArgs[0] = dep.Args[k]
+			}
+		}
+		phi.AddArgs(phiArgs[:]...)
+		// fmt.Printf("== dep %v is replaced by %v in block%v\n", dep.LongString(), phi.LongString(), blocks)
+		for _, block := range blocks {
+			block.replaceUses(dep, phi)
+		}
+		loop.exit.placeValue(phi) // move phi into block after replaceUses
+	}
+}
+
+func (loopnest *loopnest) rotateLoop(loop *loop) bool {
+	// if loopnest.f.Name != "whatthefuck" {
+	// 	return false
+	// }
+
+	// Before rotation, ensure given loop is in form of natural shape
+	if msg := loopnest.checkLoopForm(loop); msg != "" {
+		//	fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
+		return false
+	}
+
+	// Initilaize loop structure
+	loopHeader := loop.header
+	loop.exit = loopHeader.Succs[1].b
+	loop.latch = loopHeader.Preds[1].b
+	loop.body = loop.header.Succs[0].b
+
+	// Collect all Values that depend on the Values in the current loop
+	deps, bailout := loop.collectLoopUse(loopnest)
+	if bailout {
+		//fmt.Printf("Unable to process loop use other than Phi\n")
+		return false
+	}
+
+	// Move conditional test from loop header to loop latch
+	cond := loop.moveCond()
+
+	// Rewire loop header to loop body unconditionally
+	loop.rewireLoopHeader()
+
+	// Rewire loop latch to header and exit based on new coming conditional test
+	loop.rewireLoopLatch(cond)
+
+	// Create new loop guard block and wire it to appropriate blocks
+	loop.createLoopGuard(loopnest, cond)
+
+	// Update cond to use updated Phi as arguments
+	loop.updateCond(cond)
+
+	// Merge any uses that not dominated by loop guard to loop exit
+	loop.mergeLoopUse(loopnest, deps)
+
+	// TODO: Verify rotated loop form
+
+	// Gosh, loop is rotated
+	f := loopnest.f
+	fmt.Printf("Loop Rotation: %v %v\n", loop.FullString(), f.Name)
+	f.invalidateCFG()
+	return true
+}
+
+// blockOrdering converts loops with a check-loop-condition-at-beginning
+// to loops with a check-loop-condition-at-end by reordering blocks.
 // This helps loops avoid extra unnecessary jumps.
 //
 //	 loop:
@@ -21,7 +483,7 @@ package ssa
 //	entry:
 //	  CMPQ ...
 //	  JLT loop
-func loopRotate(f *Func) {
+func blockOrdering(f *Func) {
 	loopnest := f.loopnest()
 	if loopnest.hasIrreducible {
 		return

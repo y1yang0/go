@@ -4,26 +4,27 @@
 
 package ssa
 
-import (
-	"fmt"
-)
+import "fmt"
 
 type loop struct {
 	header *Block // The header node of this (reducible) loop
-	outer  *loop  // loop containing this loop
+	guard  *Block // Loop guard block(LoopRotate pass)
+	exit   *Block // Loop exit block(LoopRotate pass)
+	latch  *Block // Loop latch block, where increment happens(LoopRotate pass)
+	body   *Block // Loop body block(LoopRotate pass)
+
+	outer *loop // loop containing this loop
 
 	// By default, children, exits, and depth are not initialized.
 	children []*loop  // loops nested directly within this loop. Initialized by assembleChildren().
 	exits    []*Block // exits records blocks reached by exits from this loop. Initialized by findExits().
 
-	// Next three fields used by regalloc and/or
+	// Next four fields used by regalloc and/or
 	// aid in computation of inner-ness and list of blocks.
-	nBlocks int32 // Number of blocks in this loop but not within inner loops
-	depth   int16 // Nesting depth of the loop; 1 is outermost. Initialized by calculateDepths().
-	isInner bool  // True if never discovered to contain a loop
-
-	// register allocation uses this.
-	containsUnavoidableCall bool // True if all paths through the loop have a call
+	nBlocks                 int32 // Number of blocks in this loop but not within inner loops
+	depth                   int16 // Nesting depth of the loop; 1 is outermost. Initialized by calculateDepths().
+	isInner                 bool  // True if never discovered to contain a loop
+	containsUnavoidableCall bool  // True if all paths through the loop have a call
 }
 
 // outerinner records that outer contains inner
@@ -63,7 +64,7 @@ func checkContainsCall(bb *Block) bool {
 
 type loopnest struct {
 	f              *Func
-	b2l            []*loop
+	b2l            []*loop // block id to loop mapping
 	po             []*Block
 	sdom           SparseTree
 	loops          []*loop
@@ -577,4 +578,145 @@ func (l *loop) setDepth(d int16) {
 // going back to header
 func (l *loop) iterationEnd(b *Block, b2l []*loop) bool {
 	return b == l.header || b2l[b.ID] == nil || (b2l[b.ID] != l && b2l[b.ID].depth <= l.depth)
+}
+
+// contains checks if receiver loop contains inner loop in any depth
+func (loop *loop) contains(inner *loop) bool {
+	// Find from current loop
+	for _, child := range loop.children {
+		if child == inner {
+			return true
+		}
+	}
+	// Find from child of current loop
+	for _, child := range loop.children {
+		if child.contains(inner) {
+			return true
+		}
+	}
+	return false
+}
+
+func (ln *loopnest) getLoopPred(l *loop) *Block {
+	if l.header == nil {
+		return nil
+	}
+	var out *Block
+	for _, p := range l.header.Preds {
+		b := p.b
+		if ln.b2l[b.ID] != l {
+			if out != nil && out != b {
+				return nil // Multiple predecessors outside the loop
+			}
+			out = b
+		}
+	}
+	return out
+}
+
+func (ln *loopnest) createLoopGuard(l *loop) *Block {
+	ln.findExits()
+	if len(l.exits) != 1 || l.header.Kind != BlockIf || !l.isInner || l.outer != nil {
+		return nil
+	}
+
+	cond := l.header.ControlValues()[0]
+	switch cond.Op {
+	case OpLess64, OpLess32, OpLess16, OpLess8,
+		OpLeq64, OpLeq32, OpLeq16, OpLeq8:
+		break
+	default:
+		return nil
+	}
+	le, re := cond.Args[0], cond.Args[1]
+	entry := ln.getLoopPred(l)
+	if entry == nil || len(entry.Succs) > 1 {
+		return nil
+	}
+	preL, _ := ln.findDefNonInLoop(le, entry)
+	preR, _ := ln.findDefNonInLoop(re, entry)
+	if preL != nil && preR != nil {
+		f := l.header.Func
+		cfgtypes := &f.Config.Types
+		guard := f.NewBlock(BlockIf)
+		if preL == preR {
+			guard.Kind = BlockPlain
+		} else {
+			guard.Kind = BlockIf
+			guard.SetControl(guard.NewValue2(guard.Pos, cond.Op, cfgtypes.Bool, preL, preR))
+		}
+		preheader := guard
+		preheader.Pos = entry.Pos
+		preheader.AddEdgeTo(l.header)
+		exit := l.exits[0]
+		entry.AddEdgeTo(preheader)
+		if guard.Kind != BlockPlain {
+			guard.AddEdgeTo(exit)
+		} else {
+			guard.ResetControls()
+		}
+		entry.unlinkSucc(l.header)
+		f.invalidateCFG()
+		l.guard = guard
+	}
+	return l.guard
+}
+
+func (ln *loopnest) findDefNonInLoop(v *Value, entry *Block) (*Value, bool) {
+	if ln.sdom.IsAncestorEq(v.Block, entry) {
+		return v, true
+	}
+
+	if v.Op == OpPhi {
+		for _, parg := range v.Args {
+			if r, found := ln.findDefNonInLoop(parg, entry); found {
+				return r, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
+func (b *Block) unlinkSucc(other *Block) {
+	for i, e := range b.Succs {
+		if e.b == other {
+			b.removeSucc(i)
+			e.b.removePred(i)
+		}
+	}
+}
+
+func (ln *loopnest) updateb2l(b *Block, l *loop) {
+	b2l := make([]*loop, ln.f.NumBlocks())
+	for index, l := range ln.b2l {
+		b2l[index] = l
+	}
+	b2l[b.ID] = l
+	ln.b2l = b2l
+}
+
+// findLoopBlocks returns all basic blocks, including those contained in nested loops.
+func (ln *loopnest) findLoopBlocks(loop *loop) []*Block {
+	ln.assembleChildren()
+	loopBlocks := make([]*Block, 0)
+	for id, tloop := range ln.b2l {
+		if tloop == nil {
+			continue
+		}
+		if tloop == loop {
+			// Find block by id and append it
+			for _, block := range ln.f.Blocks {
+				if int32(block.ID) == int32(id) {
+					loopBlocks = append(loopBlocks, block)
+					break
+				}
+			}
+		} else if loop.contains(tloop) {
+			// Otherwise, check if this block is within inner loops
+			blocks := ln.findLoopBlocks(tloop)
+			loopBlocks = append(loopBlocks, blocks...)
+		}
+	}
+	return loopBlocks
 }
