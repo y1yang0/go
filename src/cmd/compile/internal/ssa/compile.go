@@ -453,9 +453,21 @@ commas. For example:
 	return fmt.Sprintf("Did not find a phase matching %s in -d=ssa/... debug option", phase)
 }
 
+// For testing and debug purpose, passes in stress list will run after every other
+// pass(before lower), to find potential bugs
+// type passConf struct {
+// 	fn     func(*Func)
+// 	before string
+// }
+
+// var stress = [...]passConf{
+// 	{fn:lcssa, before:"lower"}
+// }
+
 // list of passes for the compiler
 var passes = [...]pass{
 	// TODO: combine phielim and copyelim into a single pass?
+	// IR Optimizations
 	{name: "number lines", fn: numberLines, required: true},
 	{name: "early phielim", fn: phielim},
 	{name: "early copyelim", fn: copyelim},
@@ -484,9 +496,16 @@ var passes = [...]pass{
 	{name: "late fuse", fn: fuseLate},
 	{name: "dse", fn: dse},
 	{name: "memcombine", fn: memcombine},
+	// Loop Optimizations
+	// {name: "looprotate_test", fn: looprotatetest},
+	// {name: "loop opts", fn: loopOpts},
+	{name: "loop invariant code motion", fn: licm},
+	// {name: "loop opt", fn: opt},
+	// {name: "loop deadcode", fn: deadcode},
 	{name: "writebarrier", fn: writebarrier, required: true}, // expand write barrier ops
 	{name: "insert resched checks", fn: insertLoopReschedChecks,
 		disabled: !buildcfg.Experiment.PreemptibleLoops}, // insert resched checks in loops.
+	// Code Generation
 	{name: "lower", fn: lower, required: true},
 	{name: "addressing modes", fn: addressingModes, required: false},
 	{name: "late lower", fn: lateLower, required: true},
@@ -508,7 +527,7 @@ var passes = [...]pass{
 	{name: "late nilcheck", fn: nilcheckelim2},
 	{name: "flagalloc", fn: flagalloc, required: true}, // allocate flags register
 	{name: "regalloc", fn: regalloc, required: true},   // allocate int & float registers + stack slots
-	{name: "loop rotate", fn: loopRotate},
+	{name: "layout loop", fn: layoutLoop},
 	{name: "trim", fn: trim}, // remove empty blocks
 }
 
@@ -575,8 +594,8 @@ var passOrder = [...]constraint{
 	{"schedule", "flagalloc"},
 	// regalloc needs flags to be allocated first.
 	{"flagalloc", "regalloc"},
-	// loopRotate will confuse regalloc.
-	{"regalloc", "loop rotate"},
+	// layout loop will confuse regalloc.
+	{"regalloc", "layout loop"},
 	// trim needs regalloc to be done first.
 	{"regalloc", "trim"},
 	// memcombine works better if fuse happens first, to help merge stores.

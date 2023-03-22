@@ -323,3 +323,8 @@ func convertPhi(b *Block, v *Value, reverse int) {
 		f.Warnl(b.Pos, "converted OpPhi to %v", v.Op)
 	}
 }
+
+// eliminates phi created by loop-close-ssa-form transformation
+func elimateLCSSAPhi(fn *Func) {
+	// TODO: TO IMLEMENT
+}

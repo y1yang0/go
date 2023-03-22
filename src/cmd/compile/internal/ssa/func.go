@@ -85,6 +85,12 @@ type LocalSlotSplitKey struct {
 	Type   *types.Type // type of slot
 }
 
+func assert(cond bool, fx string, msg ...interface{}) {
+	if !cond {
+		panic(fmt.Sprintf(fx, msg...))
+	}
+}
+
 // NewFunc returns a new, empty function object.
 // Caller must reset cache before calling NewFunc.
 func (c *Config) NewFunc(fe Frontend, cache *Cache) *Func {
@@ -282,7 +288,7 @@ func (f *Func) newValue(op Op, t *types.Type, b *Block, pos src.XPos) *Value {
 // newValueNoBlock allocates a new Value with the given fields.
 // The returned value is not placed in any block.  Once the caller
 // decides on a block b, it must set b.Block and append
-// the returned value to b.Values.
+// the returned value to b.Values or simply use placeValue.
 func (f *Func) newValueNoBlock(op Op, t *types.Type, pos src.XPos) *Value {
 	var v *Value
 	if f.freeValues != nil {
@@ -306,6 +312,12 @@ func (f *Func) newValueNoBlock(op Op, t *types.Type, pos src.XPos) *Value {
 	}
 	v.Pos = pos
 	return v
+}
+
+// placeValue places new Value that not placed yet into given block.
+func (block *Block) placeValue(v *Value) {
+	v.Block = block
+	block.Values = append(block.Values, v)
 }
 
 // LogStat writes a string key and int value as a warning in a

@@ -306,8 +306,8 @@ var genericOps = []opData{
 	{name: "FMA", argLength: 3}, // compute (a*b)+c without intermediate rounding
 
 	// Data movement. Max argument length for Phi is indefinite.
-	{name: "Phi", argLength: -1, zeroWidth: true}, // select an argument based on which predecessor block we came from
-	{name: "Copy", argLength: 1},                  // output = arg0
+	{name: "Phi", aux: "String", argLength: -1, zeroWidth: true}, // aux string tells why it was generated, select an argument based on which predecessor block we came from
+	{name: "Copy", argLength: 1},                                 // output = arg0
 	// Convert converts between pointers and integers.
 	// We have a special op for this so as to not confuse GC
 	// (particularly stack maps).  It takes a memory arg so it
