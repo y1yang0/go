@@ -467,7 +467,14 @@ func (ln *loopnest) getLoopPreHeader(l *loop) *Block {
 	}
 
 	if edge != nil {
-		out.removeEdge(edge.i)
+		i := edge.i
+		e := out.Succs[i]
+		c := e.b
+		j := e.i
+
+		out.removeSucc(i)
+		c.removePred(j)
+
 		out.AddEdgeTo(preheader)
 		preheader.AddEdgeTo(header)
 	}
