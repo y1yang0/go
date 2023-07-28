@@ -75,7 +75,7 @@ func canHoist(loads []*Value, stores []*Value, val *Value) bool {
 	return false
 }
 
-func hoist(block *Block, val *Value) {
+func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 	for valIdx, v := range block.Values {
 		if val != v {
 			continue
@@ -85,7 +85,6 @@ func hoist(block *Block, val *Value) {
 			printInvariant(val, block, domBlock)
 		}
 		val.moveTo(domBlock, valIdx)
-		i--
 		break
 	}
 }
@@ -107,11 +106,10 @@ func tryHoist(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 		}
 		for i := 0; i < len(block.Values); i++ {
 			var val *Value = block.Values[i]
-			if !canHoist(val) {
+			if !isCandidate(val) {
 				continue
 			}
 
-			// any defs is inside loop, consider it as variant
 			loopnest.assembleChildren()
 			isInvariant := isLoopInvariant(val, invariants, loopBlocks)
 
@@ -127,7 +125,7 @@ func tryHoist(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 	}
 
 	for val, block := range invariants {
-		if !canHoist(val) {
+		if !canHoist(loads, stores, val) {
 			continue
 		}
 		// TODO: ADD LOOP GUARD
@@ -145,7 +143,8 @@ func tryHoist(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 		// pointer error, we need to make sure loop must execute at least
 		// once before hoistingn any Loads
 		//
-		hoist(block, val)
+		hoist(loopnest, loop, block, val)
+		// TODO: FOR STORE VALUES, THEY SHOULD SINK
 	}
 }
 
