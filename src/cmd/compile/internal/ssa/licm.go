@@ -39,11 +39,8 @@ func isCandidate(val *Value) bool {
 	return false
 }
 
-func canHoist(val *Value) {
-	// TODO: CHECK IF LOAD CAN HOIST
-}
-
-func isLoopInvariant(theValue *Value, invariants map[*Value]bool, loopBlocks []*Block) {
+func isLoopInvariant(theValue *Value, invariants map[*Value]*Block,
+	loopBlocks []*Block) bool {
 	for _, arg := range theValue.Args {
 		if _, t := invariants[arg]; t {
 			continue
@@ -61,12 +58,47 @@ func isLoopInvariant(theValue *Value, invariants map[*Value]bool, loopBlocks []*
 	return true
 }
 
+// For Load/Store and some special Values they sould be processed separately
+// even if they are loop invariants as they may have observable memory side
+// effect
+func canHoist(loads []*Value, stores []*Value, val *Value) bool {
+	if val.Op == OpLoad {
+		if len(stores) == 0 {
+			// good, no other Store
+			return true
+		}
+	} else if val.Op == OpStore {
+		if len(loads) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func hoist(block *Block, val *Value) {
+	for valIdx, v := range block.Values {
+		if val != v {
+			continue
+		}
+		domBlock := loopnest.sdom.Parent(loop.header)
+		if block.Func.pass.debug >= 1 {
+			printInvariant(val, block, domBlock)
+		}
+		val.moveTo(domBlock, valIdx)
+		i--
+		break
+	}
+}
+
 // tryHoist hoists profitable loop invariant to block that dominates the entire loop.
 // Value is considered as loop invariant if all its inputs are defined outside the loop
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
 func tryHoist(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
-	invariants := make(map[*Value]bool)
+	invariants := make(map[*Value]*Block)
+	loads := make([]*Value, 0)
+	stores := make([]*Value, 0)
+
 	for _, block := range loopBlocks {
 		// if basic block is located in a nested loop rather than directly in the
 		// current loop, it will not be processed.
@@ -75,7 +107,7 @@ func tryHoist(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 		}
 		for i := 0; i < len(block.Values); i++ {
 			var val *Value = block.Values[i]
-			if !canHoist(block, val) {
+			if !canHoist(val) {
 				continue
 			}
 
@@ -84,37 +116,36 @@ func tryHoist(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 			isInvariant := isLoopInvariant(val, invariants, loopBlocks)
 
 			if isInvariant {
-				invariants[val] = true
-				// TODO: ADD LOOP GUARD
-				//
-				// func foo(arr[]int cnt int) {
-				// 	r:=0
-				// 	for i=0;i<cnt;i++{
-				// 		r += arr[3]
-				// 	}
-				// 	return r
-				// }
-				//
-				// we can not hoist arr[3] to loop header even if it' an invariant
-				// because (Load arr,3) has observable side effect and may cause null
-				// pointer error, we need to make sure loop must execute at least
-				// once before hoistingn any Loads
-				//
-
-				for valIdx, v := range block.Values {
-					if val != v {
-						continue
-					}
-					domBlock := loopnest.sdom.Parent(loop.header)
-					if block.Func.pass.debug >= 1 {
-						printInvariant(val, block, domBlock)
-					}
-					val.moveTo(domBlock, valIdx)
-					i--
-					break
+				invariants[val] = block
+				if val.Op == OpLoad {
+					loads = append(loads, val)
+				} else if val.Op == OpStore {
+					stores = append(stores, val)
 				}
 			}
 		}
+	}
+
+	for val, block := range invariants {
+		if !canHoist(val) {
+			continue
+		}
+		// TODO: ADD LOOP GUARD
+		//
+		// func foo(arr[]int cnt int) {
+		// 	r:=0
+		// 	for i=0;i<cnt;i++{
+		// 		r += arr[3]
+		// 	}
+		// 	return r
+		// }
+		//
+		// we can not hoist arr[3] to loop header even if it' an invariant
+		// because (Load arr,3) has observable side effect and may cause null
+		// pointer error, we need to make sure loop must execute at least
+		// once before hoistingn any Loads
+		//
+		hoist(block, val)
 	}
 }
 
