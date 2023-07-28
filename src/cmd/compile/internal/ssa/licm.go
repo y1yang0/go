@@ -64,9 +64,21 @@ func isLoopInvariant(theValue *Value, invariants map[*Value]*Block,
 func canHoist(loads []*Value, stores []*Value, val *Value) bool {
 	if val.Op == OpLoad {
 		if len(stores) == 0 {
-			// good, no other Store
+			// good, no other Store at all
 			return true
 		}
+		// no other Store accesses same type of memory
+		sameType := false
+		for st := range stores {
+			if st.Type == val.Type {
+				sameType = true
+				break
+			}
+		}
+		if !sameType {
+			return true
+		}
+		// otherwise, we know nothing about memory alias, assume worst
 	} else if val.Op == OpStore {
 		if len(loads) == 0 {
 			return true
