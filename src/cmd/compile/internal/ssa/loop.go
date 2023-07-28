@@ -432,6 +432,49 @@ func (loop *loop) contains(inner *loop) bool {
 	return false
 }
 
+func (ln *loopnest) getLoopPred(l *loop) *Block {
+	if l.header == nil {
+		return nil
+	}
+	var out *Block
+	for _, p := range l.header.Preds {
+		b := p.b
+		if ln.b2l[b.ID] != l {
+			if out != nil && out != b {
+				return nil // Multiple predecessors outside the loop
+			}
+			out = b
+		}
+	}
+	return out
+}
+
+func (ln *loopnest) getLoopPreHeader(l *loop) *Block {
+	out := ln.getLoopPred(l)
+	header := l.header
+	f := header.Func
+	if out != nil && len(out.Succs) > 1 {
+		return nil
+	}
+	preheader := f.NewBlock(BlockPlain)
+	preheader.Pos = header.Pos
+	var edge *Edge
+	for _, p := range out.Succs {
+		b := p.b
+		if b == header {
+			edge = &p
+		}
+	}
+
+	if edge != nil {
+		out.removeEdge(edge.i)
+		out.AddEdgeTo(preheader)
+		preheader.AddEdgeTo(header)
+	}
+
+	return preheader
+}
+
 // findLoopBlocks returns all basic blocks, including those contained in nested loops.
 func (ln *loopnest) findLoopBlocks(loop *loop) []*Block {
 	ln.assembleChildren()
