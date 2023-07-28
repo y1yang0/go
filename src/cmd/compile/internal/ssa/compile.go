@@ -487,7 +487,6 @@ var passes = [...]pass{
 	{name: "insert resched checks", fn: insertLoopReschedChecks,
 		disabled: !buildcfg.Experiment.PreemptibleLoops}, // insert resched checks in loops.
 	{name: "loop invariant code motion", fn: licm},
-
 	{name: "lower", fn: lower, required: true},
 	{name: "addressing modes", fn: addressingModes, required: false},
 	{name: "late lower", fn: lateLower, required: true},

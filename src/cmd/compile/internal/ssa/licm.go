@@ -39,11 +39,12 @@ func isCandidate(val *Value) bool {
 	return false
 }
 
-func canHoist(val *Value) {
+func canHoist(block *Block, val *Value) bool {
 	// TODO: CHECK IF LOAD CAN HOIST
+	return false
 }
 
-func isLoopInvariant(theValue *Value, invariants map[*Value]bool, loopBlocks []*Block) {
+func isLoopInvariant(theValue *Value, invariants map[*Value]bool, loopBlocks []*Block) bool {
 	for _, arg := range theValue.Args {
 		if _, t := invariants[arg]; t {
 			continue
