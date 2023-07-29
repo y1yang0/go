@@ -49,7 +49,7 @@ func isLoopInvariant(theValue *Value, invariants map[*Value]*Block,
 		// if uses are within loop, this is not an invariant as well
 		for _, block := range loopBlocks {
 			for _, val := range block.Values {
-				if val == theValue {
+				if val == arg {
 					return false
 				}
 			}
@@ -106,6 +106,8 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
 func tryHoist(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
+	loopnest.assembleChildren()
+
 	invariants := make(map[*Value]*Block)
 	loads := make([]*Value, 0)
 	stores := make([]*Value, 0)
@@ -118,14 +120,8 @@ func tryHoist(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 		}
 		for i := 0; i < len(block.Values); i++ {
 			var val *Value = block.Values[i]
-			if !isCandidate(val) {
-				continue
-			}
-
-			loopnest.assembleChildren()
-			isInvariant := isLoopInvariant(val, invariants, loopBlocks)
-
-			if isInvariant {
+			if isLoopInvariant(val, invariants, loopBlocks) {
+				fmt.Printf("Add %v\n", val.LongString())
 				invariants[val] = block
 				if val.Op == OpLoad {
 					loads = append(loads, val)
