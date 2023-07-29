@@ -40,11 +40,9 @@ func destructPtr(val *Value) (*Value, int64) {
 }
 
 func getMemoryAlias(a, b *Value) AliasType {
-	// #1 identical values are always alias each other
 	if a == b {
 		return MustAlias
 	}
-	// #2 field access may alias if two object bases may alias and offsets are equal
 	if a.Op == OpOffPtr && b.Op == OpOffPtr {
 		ptr1 := a.Args[0]
 		ptr2 := b.Args[0]
@@ -61,6 +59,7 @@ func getMemoryAlias(a, b *Value) AliasType {
 			return NoAlias
 		}
 	}
+	// #xx deference and array index/field access may alias
 	// #xx array[index] is not alias with object.field
 	if (a.Op == OpOffPtr && b.Op == OpPtrIndex) ||
 		(b.Op == OpOffPtr && a.Op == OpPtrIndex) {
