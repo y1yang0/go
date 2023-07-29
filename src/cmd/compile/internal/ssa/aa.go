@@ -44,14 +44,31 @@ func getMemoryAlias(a, b *Value) AliasType {
 	if a == b {
 		return MustAlias
 	}
+	// #2 field access may alias if two object bases may alias and offsets are equal
+	if a.Op == OpOffPtr && b.Op == OpOffPtr {
+		ptr1 := a.Args[0]
+		ptr2 := b.Args[0]
+		off1 := a.AuxInt64()
+		off2 := b.AuxInt64()
+		if off1 == off2 {
+			at := getMemoryAlias(ptr1, ptr2)
+			if at == MayAlias {
+				return MayAlias
+			} else if at == MustAlias {
+				return MustAlias
+			}
+		} else {
+			return NoAlias
+		}
+	}
+	// #xx array[index] is not alias with object.field
+	if (a.Op == OpOffPtr && b.Op == OpPtrIndex) ||
+		(b.Op == OpOffPtr && a.Op == OpPtrIndex) {
+		return NoAlias
+	}
 	// #2 different static types are always not alias
 	if a.Type != b.Type {
 		return NoAlias
-	}
-	ptr1, off1 := destructPtr(a)
-	ptr2, off2 := destructPtr(b)
-	if ptr1 != nil && ptr2 != nil {
-		return MustAlias
 	}
 	return MayAlias
 }
