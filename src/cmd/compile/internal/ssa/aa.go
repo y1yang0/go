@@ -22,27 +22,31 @@ func isConst(v *Value) bool {
 	return false
 }
 
-func destructPtr(val *Value) (*Value, int64) {
-	var ptr *Value
-	var off int64
-	switch val.Op {
-	case OpOffPtr:
-		ptr = val.Args[0]
+func getArrayIndex(val *Value) {
+	idx := val.Args[1]
+	if isConst(idx) {
 		off = val.AuxInt64()
-	case OpPtrIndex:
-		ptr = val.Args[0]
-		idx := val.Args[1]
-		if isConst(idx) {
-			off = val.AuxInt64()
-		}
 	}
-	return ptr, off
+	return -1
+}
+
+func sameType(a, b *Value) {
+	return a.Type == b.Type
+}
+
+func addressTaken(f *Func, a *Value) {
+	return true
 }
 
 func getMemoryAlias(a, b *Value) AliasType {
+	// #1 alias(p, p) = MustAlias
 	if a == b {
 		return MustAlias
 	}
+	// #2 alias(p1.f, p2.g)
+	//		= MayAlias if f == g && alias(p1, p2) may alias
+	//      = MustAlias if f == g && alias(p1, p2) must alias
+	//      = NoAlias otherwise
 	if a.Op == OpOffPtr && b.Op == OpOffPtr {
 		ptr1 := a.Args[0]
 		ptr2 := b.Args[0]
@@ -59,14 +63,64 @@ func getMemoryAlias(a, b *Value) AliasType {
 			return NoAlias
 		}
 	}
-	// #xx deference and array index/field access may alias
-	// #xx array[index] is not alias with object.field
+	// #3 alias(p1.f, *p2)
+	//		= MayAlias if p1.f and *p2 are same type
+	//      = NoAlias otherwise
+	if a.Op == OpLoad && b.Op == OpOffPtr {
+		if sameType(a.Args[0], b) {
+			return MayAlias
+		} else {
+			return NoAlias
+		}
+	} else if b.Op == OpLoad && a.Op == OpOffPtr {
+		if sameType(b.Args[0], a) {
+			return MayAlias
+		} else {
+			return NoAlias
+		}
+	}
+
+	// #3 alias(p1[i], *p2)
+	//		= MayAlias if p1[i] and *p2 are same type
+	//      = NoAlias otherwise
+	if a.Op == OpLoad && b.Op == OpPtrIndex {
+		if sameType(a.Args[0], b) {
+			return MayAlias
+		} else {
+			return NoAlias
+		}
+	} else if b.Op == OpLoad && a.Op == OpPtrIndex {
+		if sameType(b.Args[0], a) {
+			return MayAlias
+		} else {
+			return NoAlias
+		}
+	}
+
+	// p.f q[i]
 	if (a.Op == OpOffPtr && b.Op == OpPtrIndex) ||
 		(b.Op == OpOffPtr && a.Op == OpPtrIndex) {
 		return NoAlias
 	}
-	// #2 different static types are always not alias
-	if a.Type != b.Type {
+
+	// p[i] q[j]
+	if a.Op == OpPtrIndex && b.Op == OpPtrIndex {
+		at := getMemoryAlias(a.Args[0], b.Args[0])
+		if at == MustAlias || at == MayAlias {
+			// p[const1] p[const2]
+			i1 := getArrayIndex(a)
+			if i1 != -1 {
+				i2 := getArrayIndex(b)
+				if i2 == i1 {
+					return NoAlias
+				}
+			}
+		}
+		return at
+	}
+
+	// p q
+	if sameType(a, b) {
 		return NoAlias
 	}
 	return MayAlias
