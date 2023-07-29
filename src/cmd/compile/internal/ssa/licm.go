@@ -69,7 +69,7 @@ func canHoist(loads []*Value, stores []*Value, val *Value) bool {
 		}
 		// no other Store accesses same type of memory
 		sameType := false
-		for st := range stores {
+		for _, st := range stores {
 			if st.Type == val.Type {
 				sameType = true
 				break
@@ -93,9 +93,9 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 			continue
 		}
 		domBlock := loopnest.sdom.Parent(loop.header)
-		if block.Func.pass.debug >= 1 {
-			printInvariant(val, block, domBlock)
-		}
+		// if block.Func.pass.debug >= 1 {
+		printInvariant(val, block, domBlock)
+		// }
 		val.moveTo(domBlock, valIdx)
 		break
 	}
