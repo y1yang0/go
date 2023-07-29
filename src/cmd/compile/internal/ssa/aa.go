@@ -22,9 +22,9 @@ func isConst(v *Value) bool {
 	return false
 }
 
-func destructPtr(val *Value) (ptr, off) {
-	ptr := nil
-	off := -1
+func destructPtr(val *Value) (*Value, int64) {
+	var ptr *Value
+	var off int64
 	switch val.Op {
 	case OpOffPtr:
 		ptr = val.Args[0]
@@ -39,7 +39,7 @@ func destructPtr(val *Value) (ptr, off) {
 	return ptr, off
 }
 
-func getMemoryAlias(a, b *Value) {
+func getMemoryAlias(a, b *Value) AliasType {
 	// #1 identical values are always alias each other
 	if a == b {
 		return MustAlias
@@ -50,7 +50,7 @@ func getMemoryAlias(a, b *Value) {
 	}
 	ptr1, off1 := destructPtr(a)
 	ptr2, off2 := destructPtr(b)
-	if ptr != nil && ptr2 != nil {
+	if ptr1 != nil && ptr2 != nil {
 		return MustAlias
 	}
 	return MayAlias
