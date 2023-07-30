@@ -4,7 +4,8 @@
 
 package ssa
 
-// Type Based Alias Analysis
+// Type-based alias analysis, this relies on the fact that Golang is a type-safe language
+// Any uses of Unsafe breaks the
 
 type AliasType uint
 
@@ -22,50 +23,41 @@ func isConst(v *Value) bool {
 	return false
 }
 
-func getArrayIndex(val *Value) {
+func getArrayIndex(val *Value) int64 {
 	idx := val.Args[1]
 	if isConst(idx) {
-		off = val.AuxInt64()
+		return val.AuxInt64()
 	}
 	return -1
 }
 
-func sameType(a, b *Value) {
+func sameType(a, b *Value) bool {
 	return a.Type == b.Type
 }
 
-func addressTaken(f *Func, a *Value) {
+func addressTaken(f *Func, a *Value) bool {
 	return true
 }
 
+// getMemoryAlias check if two pointers may point to the same memory location.
 func getMemoryAlias(a, b *Value) AliasType {
-	// #1 alias(p, p) = MustAlias
+	// #1 p must aliases with p
 	if a == b {
 		return MustAlias
 	}
-	// #2 alias(p1.f, p2.g)
-	//		= MayAlias if f == g && alias(p1, p2) may alias
-	//      = MustAlias if f == g && alias(p1, p2) must alias
-	//      = NoAlias otherwise
+	// #2 p1.f aliases with p2.g if f==g and p1 aliases with p2
 	if a.Op == OpOffPtr && b.Op == OpOffPtr {
-		ptr1 := a.Args[0]
-		ptr2 := b.Args[0]
 		off1 := a.AuxInt64()
 		off2 := b.AuxInt64()
 		if off1 == off2 {
-			at := getMemoryAlias(ptr1, ptr2)
-			if at == MayAlias {
-				return MayAlias
-			} else if at == MustAlias {
-				return MustAlias
-			}
+			ptr1 := a.Args[0]
+			ptr2 := b.Args[0]
+			return getMemoryAlias(ptr1, ptr2)
 		} else {
 			return NoAlias
 		}
 	}
-	// #3 alias(p1.f, *p2)
-	//		= MayAlias if p1.f and *p2 are same type
-	//      = NoAlias otherwise
+	// #3 p1.f aliases with *p2 if they have same types
 	if a.Op == OpLoad && b.Op == OpOffPtr {
 		if sameType(a.Args[0], b) {
 			return MayAlias
@@ -80,9 +72,7 @@ func getMemoryAlias(a, b *Value) AliasType {
 		}
 	}
 
-	// #3 alias(p1[i], *p2)
-	//		= MayAlias if p1[i] and *p2 are same type
-	//      = NoAlias otherwise
+	// #4 p1[i] aliases with *p2 if they have same types
 	if a.Op == OpLoad && b.Op == OpPtrIndex {
 		if sameType(a.Args[0], b) {
 			return MayAlias
@@ -97,17 +87,17 @@ func getMemoryAlias(a, b *Value) AliasType {
 		}
 	}
 
-	// p.f q[i]
+	// #5 p.f never aliases with q[i]
 	if (a.Op == OpOffPtr && b.Op == OpPtrIndex) ||
 		(b.Op == OpOffPtr && a.Op == OpPtrIndex) {
 		return NoAlias
 	}
 
-	// p[i] q[j]
+	// #6 p[i] aliases with q[j] if p==q or
 	if a.Op == OpPtrIndex && b.Op == OpPtrIndex {
 		at := getMemoryAlias(a.Args[0], b.Args[0])
 		if at == MustAlias || at == MayAlias {
-			// p[const1] p[const2]
+			// p[c1] never aliases with p[c2] if c1 != c2
 			i1 := getArrayIndex(a)
 			if i1 != -1 {
 				i2 := getArrayIndex(b)
@@ -119,7 +109,7 @@ func getMemoryAlias(a, b *Value) AliasType {
 		return at
 	}
 
-	// p q
+	// #7  p aliases with q if they have same types
 	if sameType(a, b) {
 		return NoAlias
 	}

@@ -67,18 +67,14 @@ func canHoist(loads []*Value, stores []*Value, val *Value) bool {
 			// good, no other Store at all
 			return true
 		}
-		// no other Store accesses same type of memory
-		sameType := false
+		// Slow path, we need a type-based alias analysis to know whether Load
+		// may alias with Stores
 		for _, st := range stores {
-			if st.Type == val.Type {
-				sameType = true
-				break
+			if getMemoryAlias(val, st) != NoAlias {
+				return false
 			}
 		}
-		if !sameType {
-			return true
-		}
-		// otherwise, we know nothing about memory alias, assume worst
+		return true
 	} else if val.Op == OpStore {
 		if len(loads) == 0 {
 			return true
