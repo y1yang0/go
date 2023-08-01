@@ -59,12 +59,12 @@ func canHoist(loads []*Value, stores []*Value, val *Value) bool {
 			loadPtr := val.Args[0]
 			storePtr := st.Args[0]
 			at := getMemoryAlias(loadPtr, storePtr)
-			fmt.Printf("%v == %v %v\n", at, loadPtr.LongString(), storePtr.LongString())
-			// if getMemoryAlias(loadPtr, storePtr) != NoAlias {
-			// 	return false
-			// }
+			// fmt.Printf("%v == %v %v\n", at, loadPtr.LongString(), storePtr.LongString())
+			if at != NoAlias {
+				return false
+			}
 		}
-		// return true
+		return true
 	} else if val.Op == OpStore {
 		if len(loads) == 0 {
 			return true
@@ -80,7 +80,7 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 		}
 		domBlock := loopnest.sdom.Parent(loop.header)
 		// if block.Func.pass.debug >= 1 {
-		// printInvariant(val, block, domBlock)
+		printInvariant(val, block, domBlock)
 		// }
 		val.moveTo(domBlock, valIdx)
 		break
@@ -91,7 +91,7 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 // Value is considered as loop invariant if all its inputs are defined outside the loop
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
-func tryHoist(loads []*Value, stores []*Value, invariants map[*Value]*Block) {
+func tryHoist(loopnest *loopnest, loop *loop, loads []*Value, stores []*Value, invariants map[*Value]*Block) {
 	for val, _ := range invariants {
 		if !canHoist(loads, stores, val) {
 			// continue
@@ -182,7 +182,7 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 		}
 	}
 
-	tryHoist(loads, stores, invariants)
+	tryHoist(loopnest, loop, loads, stores, invariants)
 }
 
 // licm stands for loop invariant code motion, it hoists expressions that computes
