@@ -4,8 +4,13 @@
 
 package ssa
 
-// Type-based alias analysis, this relies on the fact that Golang is a type-safe language
-// Any uses of Unsafe breaks the
+import "fmt"
+
+// This is a type-based alias analysis, it relies on the fact that Golang is a
+// type-safe language. Under this assumption, TBAA attempts to identify whether
+// two pointers may point to same memory based on their type and value semantics.
+// I conservatively assume that any unsafe calls may break this assumption, so
+// it is the responsibility of the caller to ensure this.
 
 type AliasType uint
 
@@ -15,18 +20,23 @@ const (
 	NoAlias
 )
 
-func isConst(v *Value) bool {
-	switch v.Op {
-	case OpConst64, OpConst32, OpConst16, OpConst8:
-		return true
+func (at AliasType) String() string {
+	switch at {
+	case MustAlias:
+		return fmt.Sprintf("MustAlias")
+	case MayAlias:
+		return fmt.Sprintf("MayAlias")
+	case NoAlias:
+		return fmt.Sprintf("NoAlias")
 	}
-	return false
+	return fmt.Sprintf("Unknown")
 }
 
 func getArrayIndex(val *Value) int64 {
 	idx := val.Args[1]
-	if isConst(idx) {
-		return val.AuxInt64()
+	switch idx.Op {
+	case OpConst64, OpConst32, OpConst16, OpConst8:
+		return idx.AuxInt64()
 	}
 	return -1
 }
@@ -109,7 +119,7 @@ func getMemoryAlias(a, b *Value) AliasType {
 		return at
 	}
 
-	// #7  p aliases with q if they have same types
+	// #7 p aliases with q if they have same types
 	if sameType(a, b) {
 		return NoAlias
 	}

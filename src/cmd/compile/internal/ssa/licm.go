@@ -39,22 +39,8 @@ func isCandidate(val *Value) bool {
 	return false
 }
 
-func isLoopInvariant(theValue *Value, invariants map[*Value]*Block,
+func isLoopInvariant(value *Value, invariants map[*Value]*Block,
 	loopBlocks []*Block) bool {
-	for _, arg := range theValue.Args {
-		if _, t := invariants[arg]; t {
-			continue
-		}
-
-		// if uses are within loop, this is not an invariant as well
-		for _, block := range loopBlocks {
-			for _, val := range block.Values {
-				if val == arg {
-					return false
-				}
-			}
-		}
-	}
 	return true
 }
 
@@ -70,11 +56,15 @@ func canHoist(loads []*Value, stores []*Value, val *Value) bool {
 		// Slow path, we need a type-based alias analysis to know whether Load
 		// may alias with Stores
 		for _, st := range stores {
-			if getMemoryAlias(val, st) != NoAlias {
-				return false
-			}
+			loadPtr := val.Args[0]
+			storePtr := st.Args[0]
+			at := getMemoryAlias(loadPtr, storePtr)
+			fmt.Printf("%v == %v %v\n", at, loadPtr.LongString(), storePtr.LongString())
+			// if getMemoryAlias(loadPtr, storePtr) != NoAlias {
+			// 	return false
+			// }
 		}
-		return true
+		// return true
 	} else if val.Op == OpStore {
 		if len(loads) == 0 {
 			return true
@@ -90,7 +80,7 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 		}
 		domBlock := loopnest.sdom.Parent(loop.header)
 		// if block.Func.pass.debug >= 1 {
-		printInvariant(val, block, domBlock)
+		// printInvariant(val, block, domBlock)
 		// }
 		val.moveTo(domBlock, valIdx)
 		break
@@ -101,36 +91,10 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 // Value is considered as loop invariant if all its inputs are defined outside the loop
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
-func tryHoist(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
-	loopnest.assembleChildren()
-
-	invariants := make(map[*Value]*Block)
-	loads := make([]*Value, 0)
-	stores := make([]*Value, 0)
-
-	for _, block := range loopBlocks {
-		// if basic block is located in a nested loop rather than directly in the
-		// current loop, it will not be processed.
-		if loopnest.b2l[block.ID] != loop {
-			continue
-		}
-		for i := 0; i < len(block.Values); i++ {
-			var val *Value = block.Values[i]
-			if isLoopInvariant(val, invariants, loopBlocks) {
-				fmt.Printf("Add %v\n", val.LongString())
-				invariants[val] = block
-				if val.Op == OpLoad {
-					loads = append(loads, val)
-				} else if val.Op == OpStore {
-					stores = append(stores, val)
-				}
-			}
-		}
-	}
-
-	for val, block := range invariants {
+func tryHoist(loads []*Value, stores []*Value, invariants map[*Value]*Block) {
+	for val, _ := range invariants {
 		if !canHoist(loads, stores, val) {
-			continue
+			// continue
 		}
 		// TODO: ADD LOOP GUARD
 		//
@@ -147,9 +111,78 @@ func tryHoist(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 		// pointer error, we need to make sure loop must execute at least
 		// once before hoistingn any Loads
 		//
-		hoist(loopnest, loop, block, val)
+		// hoist(loopnest, loop, block, val)
 		// TODO: FOR STORE VALUES, THEY SHOULD SINK
 	}
+}
+
+func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
+	invariants := make(map[*Value]*Block)
+	loads := make([]*Value, 0)
+	stores := make([]*Value, 0)
+	// some Value depends on Value that is defined in backedge blocks, delay marking
+	// them until their dependent values were marked
+	// delayMark := make([]*Value, 0)
+
+	for _, block := range loopBlocks {
+		// if basic block is located in a nested loop rather than directly in the
+		// current loop, it will not be processed.
+		if loopnest.b2l[block.ID] != loop {
+			continue
+		}
+		for _, value := range block.Values {
+			// if isLoopInvariant(value, invariants, loopBlocks) {
+			// invariants[value] = block
+			// }
+			// Store/Load depends on memory value, which is usually represented
+			// as the non-loop-invariant memory value, for example, a memory Phi in loops, but
+			// this is not true semantically. We need to treat these kind of Store
+			// specifically as loop invariants.
+			//
+			//      v4, v5.... ;; loop invariant
+			// 	cond:
+			// 		v2 = Phi <mem> v1 v3
+			//      v6 = ...
+			// 	BlockIf v6 body, exit
+			//  body:
+			//		v3 (15) = Store <mem> v4 v5 v2
+			//  exit:
+			uses := value.Args
+			if value.Op == OpStore || value.Op == OpLoad {
+				// discard last memory value
+				uses = uses[:len(uses)-1]
+			}
+
+			foundVariant := false
+		Out:
+			for _, use := range uses {
+				if _, t := invariants[use]; t {
+					continue
+				}
+
+				// if uses are within loop, this is not an invariant as well
+				for _, block := range loopBlocks {
+					for _, val := range block.Values {
+						if val == use {
+							foundVariant = false
+							break Out
+						}
+					}
+				}
+			}
+			if !foundVariant {
+				invariants[value] = block
+			}
+			switch value.Op {
+			case OpLoad:
+				loads = append(loads, value)
+			case OpStore:
+				stores = append(stores, value)
+			}
+		}
+	}
+
+	tryHoist(loads, stores, invariants)
 }
 
 // licm stands for loop invariant code motion, it hoists expressions that computes
@@ -185,7 +218,8 @@ func licm(f *Func) {
 		}
 		// try to hoist loop invariant outside the loop
 		if !tooComplicated {
-			tryHoist(loopnest, loop, loopBlocks)
+			loopnest.assembleChildren()
+			markInvariant(loopnest, loop, loopBlocks)
 		}
 	}
 }
