@@ -41,15 +41,24 @@ func canHoist(loads []*Value, stores []*Value, val *Value) bool {
 			loadPtr := val.Args[0]
 			storePtr := st.Args[0]
 			at := getMemoryAlias(loadPtr, storePtr)
-			fmt.Printf("%v == %v %v\n", at, loadPtr.LongString(), storePtr.LongString())
+			fmt.Printf("%v == %v with %v in %v\n", at, loadPtr.LongString(), storePtr.LongString(), val.Block.Func.Name)
 			// if at != NoAlias {
 			// return false
 			// }
 		}
 		// return true
 	} else if val.Op == OpStore {
-		if len(loads) == 0 {
+		if len(loads) == 0 && len(stores) == 1 /*itself only*/ {
 			return true
+		}
+		for _, v := range append(stores, loads...) {
+			ptr := v.Args[0]
+			storePtr := val.Args[0]
+			at := getMemoryAlias(ptr, storePtr)
+			fmt.Printf("%v == %v with %v in %v\n", at, ptr.LongString(), storePtr.LongString(), val.Block.Func.Name)
+			// if at != NoAlias {
+			// return false
+			// }
 		}
 	}
 	return false
