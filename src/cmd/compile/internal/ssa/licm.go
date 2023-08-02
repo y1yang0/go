@@ -26,24 +26,6 @@ func printInvariant(val *Value, block *Block, domBlock *Block) {
 	fmt.Printf("  %v\n", val.LongString())
 }
 
-// isCandidate carefully selects a subset of values that allow them to be hoisted
-// or sunk, as empirical evidence shows that not all loop invariants are worth
-// applying LICM. Applying LICM to low-benefit values may increase register pressure
-// on the loop header/exit blocks, which can have a negative impact on performance.
-func isCandidate(val *Value) bool {
-	switch val.Op {
-	case OpLoad:
-		return true
-		// TODO: ADD STORE
-	}
-	return false
-}
-
-func isLoopInvariant(value *Value, invariants map[*Value]*Block,
-	loopBlocks []*Block) bool {
-	return true
-}
-
 // For Load/Store and some special Values they sould be processed separately
 // even if they are loop invariants as they may have observable memory side
 // effect
@@ -59,12 +41,12 @@ func canHoist(loads []*Value, stores []*Value, val *Value) bool {
 			loadPtr := val.Args[0]
 			storePtr := st.Args[0]
 			at := getMemoryAlias(loadPtr, storePtr)
-			// fmt.Printf("%v == %v %v\n", at, loadPtr.LongString(), storePtr.LongString())
-			if at != NoAlias {
-				return false
-			}
+			fmt.Printf("%v == %v %v\n", at, loadPtr.LongString(), storePtr.LongString())
+			// if at != NoAlias {
+			// return false
+			// }
 		}
-		return true
+		// return true
 	} else if val.Op == OpStore {
 		if len(loads) == 0 {
 			return true
@@ -117,7 +99,6 @@ func tryHoist(loopnest *loopnest, loop *loop, loads []*Value, stores []*Value, i
 }
 
 func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
-	tooComplicated := false
 	loopValues := make(map[*Value]bool)
 	invariants := make(map[*Value]*Block)
 	loads := make([]*Value, 0)
@@ -128,7 +109,7 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 			loopValues[val] = true
 		}
 	}
-Bailout:
+
 	for _, block := range loopBlocks {
 		// If basic block is located in a nested loop rather than directly in the
 		// current loop, it will not be processed.
@@ -137,14 +118,6 @@ Bailout:
 		}
 
 		for _, value := range block.Values {
-			if value.Op == OpLoad {
-				loads = append(loads, value)
-			} else if value.Op == OpStore {
-				stores = append(stores, value)
-			} else if value.Op.IsCall() {
-				tooComplicated = true
-				break Bailout
-			}
 			// Store/Load depends on memory value, which is usually represented
 			// as the non-loop-invariant memory value, for example, a memory Phi
 			// in loops, but this is not true semantically. We need to treat these
@@ -159,9 +132,22 @@ Bailout:
 			//		v3 (15) = Store <mem> v4 v5 v2
 			//  exit:
 			uses := value.Args
-			if value.Op == OpStore || value.Op == OpLoad {
+			if value.Op == OpLoad {
+				loads = append(loads, value)
 				// discard last memory value
 				uses = uses[:len(uses)-1]
+			} else if value.Op == OpStore {
+				stores = append(stores, value)
+				// discard last memory value
+				uses = uses[:len(uses)-1]
+			} else if value.Op.IsCall() {
+				// bail out the compilation if too complicated, for example, loop involves Calls
+				// Theoretically we can hoist Call as long as it does not impose any observable
+				// side effects, e.g. only reads memory or dont access memory at all, but
+				// unfortunate we may run alias analysis in advance to get such facts, that
+				// some what heavy for this pass at present, so we give up further motion
+				// once loop blocks involve Calls
+				return
 			}
 
 			isInvariant := true
@@ -180,15 +166,7 @@ Bailout:
 		}
 	}
 
-	// bail out the compilation if too complicated, for example, loop involves Calls
-	// Theoretically we can hoist Call as long as it does not impose any observable
-	// side effects, e.g. only reads memory or dont access memory at all, but
-	// unfortunate we may run alias analysis in advance to get such facts, that
-	// some what heavy for this pass at present, so we give up further motion
-	// once loop blocks involve Calls
-	if !tooComplicated {
-		tryHoist(loopnest, loop, loads, stores, invariants)
-	}
+	tryHoist(loopnest, loop, loads, stores, invariants)
 }
 
 // licm stands for loop invariant code motion, it hoists expressions that computes
