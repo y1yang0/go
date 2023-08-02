@@ -127,28 +127,10 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 		}
 
 		for _, value := range block.Values {
-			// Store/Load depends on memory value, which is usually represented
-			// as the non-loop-invariant memory value, for example, a memory Phi
-			// in loops, but this is not true semantically. We need to treat these
-			// kind of Store specifically as loop invariants.
-			//
-			//      v4, v5.... ;; loop invariant
-			// 	cond:
-			// 		v2 = Phi <mem> v1 v3
-			//      v6 = ...
-			// 	BlockIf v6 body, exit
-			//  body:
-			//		v3 (15) = Store <mem> v4 v5 v2
-			//  exit:
-			uses := value.Args
 			if value.Op == OpLoad {
 				loads = append(loads, value)
-				// discard last memory value
-				uses = uses[:len(uses)-1]
 			} else if value.Op == OpStore {
 				stores = append(stores, value)
-				// discard last memory value
-				uses = uses[:len(uses)-1]
 			} else if value.Op.IsCall() {
 				// bail out the compilation if too complicated, for example, loop involves Calls
 				// Theoretically we can hoist Call as long as it does not impose any observable
@@ -160,7 +142,24 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 			}
 
 			isInvariant := true
-			for _, use := range uses {
+			for _, use := range value.Args {
+				if use.Type.IsMemory() {
+					// Store Load and other memory value depends on memory value, which is usually represented
+					// as the non-loop-invariant memory value, for example, a memory Phi
+					// in loops, but this is not true semantically. We need to treat these
+					// kind of Store specifically as loop invariants.
+					//
+					//      v4, v5.... ;; loop invariant
+					// 	cond:
+					// 		v2 = Phi <mem> v1 v3
+					//      v6 = ...
+					// 	BlockIf v6 body, exit
+					//  body:
+					//		v3 (15) = Store <mem> v4 v5 v2
+					//  exit:
+					// discard last memory value
+					continue
+				}
 				if _, t := invariants[use]; t {
 					continue
 				}
