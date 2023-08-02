@@ -92,7 +92,7 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
 func tryHoist(loopnest *loopnest, loop *loop, loads []*Value, stores []*Value, invariants map[*Value]*Block) {
-	for val, block := range invariants {
+	for val, _ := range invariants {
 		if !canHoist(loads, stores, val) {
 			continue
 		}
@@ -111,7 +111,7 @@ func tryHoist(loopnest *loopnest, loop *loop, loads []*Value, stores []*Value, i
 		// pointer error, we need to make sure loop must execute at least
 		// once before hoistingn any Loads
 		//
-		hoist(loopnest, loop, block, val)
+		// hoist(loopnest, loop, block, val)
 		// TODO: FOR STORE VALUES, THEY SHOULD SINK
 	}
 }
