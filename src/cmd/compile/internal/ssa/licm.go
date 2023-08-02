@@ -117,6 +117,7 @@ func tryHoist(loopnest *loopnest, loop *loop, loads []*Value, stores []*Value, i
 }
 
 func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
+	tooComplicated := false
 	loopValues := make(map[*Value]bool)
 	invariants := make(map[*Value]*Block)
 	loads := make([]*Value, 0)
@@ -127,7 +128,7 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 			loopValues[val] = true
 		}
 	}
-
+Bailout:
 	for _, block := range loopBlocks {
 		// If basic block is located in a nested loop rather than directly in the
 		// current loop, it will not be processed.
@@ -136,10 +137,18 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 		}
 
 		for _, value := range block.Values {
+			if value.Op == OpLoad {
+				loads = append(loads, value)
+			} else if value.Op == OpStore {
+				stores = append(stores, value)
+			} else if value.Op.IsCall() {
+				tooComplicated = true
+				break Bailout
+			}
 			// Store/Load depends on memory value, which is usually represented
-			// as the non-loop-invariant memory value, for example, a memory Phi in loops, but
-			// this is not true semantically. We need to treat these kind of Store
-			// specifically as loop invariants.
+			// as the non-loop-invariant memory value, for example, a memory Phi
+			// in loops, but this is not true semantically. We need to treat these
+			// kind of Store specifically as loop invariants.
 			//
 			//      v4, v5.... ;; loop invariant
 			// 	cond:
@@ -168,16 +177,18 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 			if isInvariant {
 				invariants[value] = block
 			}
-			switch value.Op {
-			case OpLoad:
-				loads = append(loads, value)
-			case OpStore:
-				stores = append(stores, value)
-			}
 		}
 	}
 
-	tryHoist(loopnest, loop, loads, stores, invariants)
+	// bail out the compilation if too complicated, for example, loop involves Calls
+	// Theoretically we can hoist Call as long as it does not impose any observable
+	// side effects, e.g. only reads memory or dont access memory at all, but
+	// unfortunate we may run alias analysis in advance to get such facts, that
+	// some what heavy for this pass at present, so we give up further motion
+	// once loop blocks involve Calls
+	if !tooComplicated {
+		tryHoist(loopnest, loop, loads, stores, invariants)
+	}
 }
 
 // licm stands for loop invariant code motion, it hoists expressions that computes
@@ -196,25 +207,8 @@ func licm(f *Func) {
 			continue
 		}
 
-		// Theoretically we can hoist Call as long as it does not impose any observable
-		// side effects, e.g. only reads memory or dont access memory at all, but
-		// unfortunate we may run alias analysis in advance to get such facts, that
-		// some what heavy for this pass at present, so we give up further motion
-		// once loop blocks involve Calls
-		tooComplicated := false
-	Out:
-		for _, block := range loopBlocks {
-			for _, val := range block.Values {
-				if val.Op.IsCall() || val.Op.HasSideEffects() {
-					tooComplicated = true
-					break Out
-				}
-			}
-		}
 		// try to hoist loop invariant outside the loop
-		if !tooComplicated {
-			loopnest.assembleChildren()
-			markInvariant(loopnest, loop, loopBlocks)
-		}
+		loopnest.assembleChildren()
+		markInvariant(loopnest, loop, loopBlocks)
 	}
 }
