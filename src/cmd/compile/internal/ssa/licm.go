@@ -92,9 +92,9 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
 func tryHoist(loopnest *loopnest, loop *loop, loads []*Value, stores []*Value, invariants map[*Value]*Block) {
-	for val, _ := range invariants {
+	for val, block := range invariants {
 		if !canHoist(loads, stores, val) {
-			// continue
+			continue
 		}
 		// TODO: ADD LOOP GUARD
 		//
@@ -111,29 +111,31 @@ func tryHoist(loopnest *loopnest, loop *loop, loads []*Value, stores []*Value, i
 		// pointer error, we need to make sure loop must execute at least
 		// once before hoistingn any Loads
 		//
-		// hoist(loopnest, loop, block, val)
+		hoist(loopnest, loop, block, val)
 		// TODO: FOR STORE VALUES, THEY SHOULD SINK
 	}
 }
 
 func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
+	loopValues := make(map[*Value]bool)
 	invariants := make(map[*Value]*Block)
 	loads := make([]*Value, 0)
 	stores := make([]*Value, 0)
-	// some Value depends on Value that is defined in backedge blocks, delay marking
-	// them until their dependent values were marked
-	// delayMark := make([]*Value, 0)
+	// First, collect all def inside loop
+	for _, block := range loopBlocks {
+		for _, val := range block.Values {
+			loopValues[val] = true
+		}
+	}
 
 	for _, block := range loopBlocks {
-		// if basic block is located in a nested loop rather than directly in the
+		// If basic block is located in a nested loop rather than directly in the
 		// current loop, it will not be processed.
 		if loopnest.b2l[block.ID] != loop {
 			continue
 		}
+
 		for _, value := range block.Values {
-			// if isLoopInvariant(value, invariants, loopBlocks) {
-			// invariants[value] = block
-			// }
 			// Store/Load depends on memory value, which is usually represented
 			// as the non-loop-invariant memory value, for example, a memory Phi in loops, but
 			// this is not true semantically. We need to treat these kind of Store
@@ -153,24 +155,17 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 				uses = uses[:len(uses)-1]
 			}
 
-			foundVariant := false
-		Out:
+			isInvariant := true
 			for _, use := range uses {
 				if _, t := invariants[use]; t {
 					continue
 				}
-
-				// if uses are within loop, this is not an invariant as well
-				for _, block := range loopBlocks {
-					for _, val := range block.Values {
-						if val == use {
-							foundVariant = false
-							break Out
-						}
-					}
+				if _, t := loopValues[use]; t {
+					isInvariant = false
+					break
 				}
 			}
-			if !foundVariant {
+			if isInvariant {
 				invariants[value] = block
 			}
 			switch value.Op {
