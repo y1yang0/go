@@ -19,6 +19,11 @@ import "fmt"
 
 const MaxLoopBlockSize = 8
 
+type LICMCarrier struct {
+	loopnest *loopnest // the global loopnest
+	loop     *loop     // target loop to be optimized out
+}
+
 func printInvariant(val *Value, block *Block, domBlock *Block) {
 	fmt.Printf("== Hoist %v(%v) from b%v to b%v in %v\n",
 		val.Op.String(), val.String(),
@@ -78,11 +83,13 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 	}
 }
 
-func mustExecuteUnconditionally(loopnest *loopnest, loop *loop, val *Value) bool {
+// executeUnconditionally checks if Value is guaranteed to execute during loop iterations
+// Otherwise, it should not be hoisted. The most common cases are invariants guarded by
+// conditional expressions.
+func executeUnconditionally(loopnest *loopnest, loop *loop, val *Value) bool {
 	block := val.Block
 	for _, exit := range loop.exits {
 		if !loopnest.sdom.IsAncestorEq(block, exit) {
-			fmt.Printf("== %v != %v", block.LongString(), exit.LongString())
 			return false
 		}
 	}
@@ -98,7 +105,7 @@ func tryHoist(loopnest *loopnest, loop *loop, loads []*Value, stores []*Value, i
 	// Value is guaranteed to execute in a loop if the block containing it dominates
 	// all the exit blocks
 	for val, _ := range invariants {
-		if !mustExecuteUnconditionally(loopnest, loop, val) {
+		if !executeUnconditionally(loopnest, loop, val) {
 			continue
 		}
 		if !canHoist(loads, stores, val) {
@@ -211,7 +218,8 @@ func licm(f *Func) {
 		}
 
 		// try to hoist loop invariant outside the loop
-		loopnest.assembleChildren()
+		loopnest.assembleChildren() // initialize loop children
+		loopnest.findExits()        // initialize loop exits
 		markInvariant(loopnest, loop, loopBlocks)
 	}
 }
