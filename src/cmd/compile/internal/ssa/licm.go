@@ -19,9 +19,11 @@ import "fmt"
 
 const MaxLoopBlockSize = 8
 
-type LICMCarrier struct {
+type state struct {
 	loopnest *loopnest // the global loopnest
 	loop     *loop     // target loop to be optimized out
+	loads    []*Value
+	stores   []*Value
 }
 
 func printInvariant(val *Value, block *Block, domBlock *Block) {
@@ -34,7 +36,9 @@ func printInvariant(val *Value, block *Block, domBlock *Block) {
 // For Load/Store and some special Values they sould be processed separately
 // even if they are loop invariants as they may have observable memory side
 // effect
-func canHoist(loads []*Value, stores []*Value, val *Value) bool {
+func (s *state) conflictMemory(val *Value) bool {
+	loads := s.loads
+	stores := s.stores
 	if val.Op == OpLoad {
 		if len(stores) == 0 {
 			// good, no other Store at all
@@ -86,10 +90,11 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 // executeUnconditionally checks if Value is guaranteed to execute during loop iterations
 // Otherwise, it should not be hoisted. The most common cases are invariants guarded by
 // conditional expressions.
-func executeUnconditionally(loopnest *loopnest, loop *loop, val *Value) bool {
+func (s *state) executeUnconditionally(val *Value) bool {
 	block := val.Block
-	for _, exit := range loop.exits {
-		if !loopnest.sdom.IsAncestorEq(block, exit) {
+	sdom := s.loopnest.sdom
+	for _, exit := range s.loop.exits {
+		if !sdom.IsAncestorEq(block, exit) {
 			return false
 		}
 	}
@@ -100,42 +105,26 @@ func executeUnconditionally(loopnest *loopnest, loop *loop, val *Value) bool {
 // Value is considered as loop invariant if all its inputs are defined outside the loop
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
-func tryHoist(loopnest *loopnest, loop *loop, loads []*Value, stores []*Value, invariants map[*Value]*Block) {
-	// Only instructions that guaranteed to execute are able to apply LICM
-	// Value is guaranteed to execute in a loop if the block containing it dominates
-	// all the exit blocks
+func (s *state) tryHoist(invariants map[*Value]*Block) {
 	for val, _ := range invariants {
-		if !executeUnconditionally(loopnest, loop, val) {
+		// Instructions are guaranteed to execute?
+		if !s.executeUnconditionally(val) {
 			continue
 		}
-		if !canHoist(loads, stores, val) {
+		// Instructions access different memory locations?
+		if !s.conflictMemory(val) {
 			continue
 		}
-		// TODO: ADD LOOP GUARD
-		//
-		// func foo(arr[]int cnt int) {
-		// 	r:=0
-		// 	for i=0;i<cnt;i++{
-		// 		r += arr[3]
-		// 	}
-		// 	return r
-		// }
-		//
-		// we can not hoist arr[3] to loop header even if it' an invariant
-		// because (Load arr,3) has observable side effect and may cause null
-		// pointer error, we need to make sure loop must execute at least
-		// once before hoistingn any Loads
-		//
 		// hoist(loopnest, loop, block, val)
-		// TODO: FOR STORE VALUES, THEY SHOULD SINK
 	}
 }
 
-func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
+func (s *state) markInvariant(loopBlocks []*Block) map[*Value]*Block {
 	loopValues := make(map[*Value]bool)
 	invariants := make(map[*Value]*Block)
-	loads := make([]*Value, 0)
-	stores := make([]*Value, 0)
+
+	s.loads = make([]*Value, 0)
+	s.stores = make([]*Value, 0)
 	// First, collect all def inside loop
 	for _, block := range loopBlocks {
 		for _, val := range block.Values {
@@ -146,15 +135,15 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 	for _, block := range loopBlocks {
 		// If basic block is located in a nested loop rather than directly in the
 		// current loop, it will not be processed.
-		if loopnest.b2l[block.ID] != loop {
+		if s.loopnest.b2l[block.ID] != s.loop {
 			continue
 		}
 
 		for _, value := range block.Values {
 			if value.Op == OpLoad {
-				loads = append(loads, value)
+				s.loads = append(s.loads, value)
 			} else if value.Op == OpStore {
-				stores = append(stores, value)
+				s.stores = append(s.stores, value)
 			} else if value.Op.IsCall() {
 				// bail out the compilation if too complicated, for example, loop involves Calls
 				// Theoretically we can hoist Call as long as it does not impose any observable
@@ -162,7 +151,7 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 				// unfortunate we may run alias analysis in advance to get such facts, that
 				// some what heavy for this pass at present, so we give up further motion
 				// once loop blocks involve Calls
-				return
+				return nil
 			}
 
 			isInvariant := true
@@ -197,8 +186,7 @@ func markInvariant(loopnest *loopnest, loop *loop, loopBlocks []*Block) {
 			}
 		}
 	}
-
-	tryHoist(loopnest, loop, loads, stores, invariants)
+	return invariants
 }
 
 // licm stands for loop invariant code motion, it hoists expressions that computes
@@ -220,6 +208,10 @@ func licm(f *Func) {
 		// try to hoist loop invariant outside the loop
 		loopnest.assembleChildren() // initialize loop children
 		loopnest.findExits()        // initialize loop exits
-		markInvariant(loopnest, loop, loopBlocks)
+		state := &state{loopnest: loopnest, loop: loop}
+		invariants := state.markInvariant(loopBlocks)
+		if invariants != nil {
+			state.tryHoist(invariants)
+		}
 	}
 }
