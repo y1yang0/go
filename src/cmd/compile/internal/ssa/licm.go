@@ -81,9 +81,8 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 func mustExecuteUnconditionally(loopnest *loopnest, loop *loop, val *Value) bool {
 	block := val.Block
 	for _, exit := range loop.exits {
-		dom := loopnest.sdom.Parent(exit)
-		if dom != block {
-			fmt.Printf("== %v != %v", dom.LongString(), block.LongString())
+		if !loopnest.sdom.IsAncestorEq(block, exit) {
+			fmt.Printf("== %v != %v", block.LongString(), exit.LongString())
 			return false
 		}
 	}
