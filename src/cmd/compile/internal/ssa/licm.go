@@ -78,12 +78,30 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 	}
 }
 
+func mustExecuteUnconditionally(loopnest *loopnest, loop *loop, val *Value) bool {
+	block := val.Block
+	for _, exit := range loop.exits {
+		dom := loopnest.sdom.Parent(exit)
+		if dom != block {
+			fmt.Printf("== %v != %v", dom.LongString(), block.LongString())
+			return false
+		}
+	}
+	return true
+}
+
 // tryHoist hoists profitable loop invariant to block that dominates the entire loop.
 // Value is considered as loop invariant if all its inputs are defined outside the loop
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
 func tryHoist(loopnest *loopnest, loop *loop, loads []*Value, stores []*Value, invariants map[*Value]*Block) {
+	// Only instructions that guaranteed to execute are able to apply LICM
+	// Value is guaranteed to execute in a loop if the block containing it dominates
+	// all the exit blocks
 	for val, _ := range invariants {
+		if !mustExecuteUnconditionally(loopnest, loop, val) {
+			continue
+		}
 		if !canHoist(loads, stores, val) {
 			continue
 		}

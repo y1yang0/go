@@ -7,7 +7,8 @@ package ssa
 import "fmt"
 
 // This is a type-based alias analysis, it relies on the fact that Golang is a
-// type-safe language. Under this assumption, TBAA attempts to identify whether
+// type-safe language, i.e. different pointer types cannot be converted to each
+// other in Golang. Under this assumption, TBAA attempts to identify whether
 // two pointers may point to same memory based on their type and value semantics.
 // I conservatively assume that any unsafe calls may break this assumption, so
 // it is the responsibility of the caller to ensure this.
