@@ -51,9 +51,10 @@ func loopRotate(loopnest *loopnest, loop *loop) bool {
 	oldLoopHeader.ResetControls()
 	oldLoopHeader.Succs = oldLoopHeader.Succs[:0]
 	if oldLoopBody == oldLoopLatch {
+		// no loop body?
 		oldLoopHeader.AddEdgeTo(oldLoopLatch)
 	} else {
-		//TODO
+		oldLoopHeader.AddEdgeTo(oldLoopBody)
 	}
 
 	// Rewire loop latch to loop body
