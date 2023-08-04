@@ -21,7 +21,7 @@ func moveValue(block *Block, val *Value) {
 }
 
 func loopRotate(loopnest *loopnest, loop *loop) bool {
-	if loopnest.f.pass.test != 1024 {
+	if loopnest.f.Name != "whatthefuck" {
 		return false
 	}
 	loopnest.assembleChildren() // initialize loop children
