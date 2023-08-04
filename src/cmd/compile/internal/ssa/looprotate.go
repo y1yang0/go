@@ -43,12 +43,39 @@ func (block *Block) resetBlockPlain(s1 *Block) {
 	block.AddEdgeTo(s1)
 }
 
+func checkLoopForm(loop *loop) bool {
+	loopHeader := loop.header
+	if loopHeader.Kind != BlockIf {
+		return false
+	}
+	if len(loopHeader.Preds) != 2 {
+		return false
+	}
+	loopExit := loop.header.Succs[1].b
+	illShape := true
+	for _, exit := range loop.exits {
+		if exit == loopExit {
+			illShape = false
+			break
+		}
+	}
+	if illShape {
+		return false
+	}
+	return true
+}
+
 func loopRotate(loopnest *loopnest, loop *loop) bool {
 	if loopnest.f.Name != "whatthefuck" {
 		return false
 	}
+
+	// Before rotation, ensure given loop is in form of normal shape
 	loopnest.assembleChildren() // initialize loop children
 	loopnest.findExits()        // initialize loop exits
+	if !checkLoopForm(loop) {
+		return false
+	}
 
 	loopHeader := loop.header
 	loopBody := loop.header.Succs[0].b
