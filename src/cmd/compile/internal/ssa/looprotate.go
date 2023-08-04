@@ -20,6 +20,29 @@ func moveValue(block *Block, val *Value) {
 	}
 }
 
+func (block *Block) resetBlockIf(ctrl *Value, s1, s2 *Block) {
+	for len(block.Succs) > 0 {
+		// remove all successors and keep Phi as it is
+		block.removeEdgeOnly(0)
+	}
+	block.Kind = BlockIf
+	block.SetControl(ctrl)
+	block.Succs = block.Succs[:0]
+	block.AddEdgeTo(s1)
+	block.AddEdgeTo(s2)
+}
+
+func (block *Block) resetBlockPlain(s1 *Block) {
+	for len(block.Succs) > 0 {
+		block.removeEdgeOnly(0)
+	}
+	block.Kind = BlockPlain
+	block.Likely = BranchUnknown
+	block.ResetControls()
+	block.Succs = block.Succs[:0]
+	block.AddEdgeTo(s1)
+}
+
 func loopRotate(loopnest *loopnest, loop *loop) bool {
 	if loopnest.f.Name != "whatthefuck" {
 		return false
@@ -27,45 +50,24 @@ func loopRotate(loopnest *loopnest, loop *loop) bool {
 	loopnest.assembleChildren() // initialize loop children
 	loopnest.findExits()        // initialize loop exits
 
-	oldLoopHeader := loop.header
-	oldLoopBody := loop.header.Succs[0].b
-	oldLoopExit := oldLoopHeader.Succs[1].b
-	oldLoopLatch := oldLoopHeader.Preds[1].b // where increment happens
+	loopHeader := loop.header
+	loopBody := loop.header.Succs[0].b
+	loopExit := loopHeader.Succs[1].b
+	loopLatch := loopHeader.Preds[1].b // where increment happens
 
 	fmt.Printf("==START cond:%v, exit:%v latch%v, body:%v -- %v\n",
-		oldLoopHeader.String(), oldLoopExit.String(), oldLoopLatch.String(),
-		oldLoopBody.String(), loopnest.f.Name)
+		loopHeader.String(), loopExit.String(), loopLatch.String(),
+		loopBody.String(), loopnest.f.Name)
 
 	// Move conditional test from loop header to loop latch
-	headerControl := oldLoopHeader.Controls[0]
-	headerSuccs := make([]Edge, len(oldLoopHeader.Succs))
-	copy(headerSuccs, oldLoopHeader.Succs)
-	moveValue(oldLoopLatch, headerControl)
+	headerControl := loopHeader.Controls[0]
+	moveValue(loopLatch, headerControl)
 
-	// Rewire loop cond to loop body unconditionally
-	for len(oldLoopHeader.Succs) > 0 {
-		oldLoopHeader.removeEdgeOnly(0)
-	}
-	oldLoopHeader.Kind = BlockPlain
-	oldLoopHeader.Likely = BranchUnknown
-	oldLoopHeader.ResetControls()
-	oldLoopHeader.Succs = oldLoopHeader.Succs[:0]
-	if oldLoopBody == oldLoopLatch {
-		// no loop body?
-		oldLoopHeader.AddEdgeTo(oldLoopLatch)
-	} else {
-		oldLoopHeader.AddEdgeTo(oldLoopBody)
-	}
+	// Rewire header to loop body unconditionally
+	loopHeader.resetBlockPlain(loopBody)
 
-	// Rewire loop latch to loop body
-	for len(oldLoopLatch.Succs) > 0 {
-		oldLoopLatch.removeEdgeOnly(0)
-	}
-	oldLoopLatch.Kind = BlockIf
-	oldLoopLatch.SetControl(headerControl)
-	oldLoopLatch.Succs = oldLoopLatch.Succs[:0]
-	oldLoopLatch.AddEdgeTo(oldLoopHeader) // Rewire loop latch to loop header
-	oldLoopLatch.AddEdgeTo(oldLoopExit)   // Rewire loop latch to loop exit
+	// Rewire loop latch to header and exit based on conditional test
+	loopLatch.resetBlockIf(headerControl, loopHeader, loopExit)
 	loopnest.f.dumpFile("oops")
 	fmt.Printf("== Done\n")
 	return true
