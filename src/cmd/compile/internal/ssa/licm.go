@@ -205,13 +205,14 @@ func licm(f *Func) {
 			continue
 		}
 
-		// try to hoist loop invariant outside the loop
-		loopnest.assembleChildren() // initialize loop children
-		loopnest.findExits()        // initialize loop exits
-		state := &state{loopnest: loopnest, loop: loop}
-		invariants := state.markInvariant(loopBlocks)
-		if invariants != nil {
-			state.tryHoist(invariants)
-		}
+		// // try to hoist loop invariant outside the loop
+		// loopnest.assembleChildren() // initialize loop children
+		// loopnest.findExits()        // initialize loop exits
+		// state := &state{loopnest: loopnest, loop: loop}
+		// invariants := state.markInvariant(loopBlocks)
+		// if invariants != nil {
+		// 	state.tryHoist(invariants)
+		// }
+		loopRotate(loopnest, loop)
 	}
 }

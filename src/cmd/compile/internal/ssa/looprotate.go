@@ -4,6 +4,27 @@
 
 package ssa
 
+import "fmt"
+
+// ----------------------------------------------------------------------------
+// Loop Rotation
+//
+// Loop rotation transforms while/for loop to do-while style loop
+func loopRotate(loopnest *loopnest, loop *loop) {
+	loopnest.assembleChildren() // initialize loop children
+	loopnest.findExits()        // initialize loop exits
+
+	oldLoopCond := loop.header
+	oldLoopBody := loop.header.Succs[0].b
+	oldLoopExit := oldLoopCond.Succs[1].b
+	oldLoopLatch := oldLoopCond.Preds[1].b // where increment happens
+
+	fmt.Printf("==START cond:%v, exit:%v latch%v, body:%v -- %v\n",
+		oldLoopCond.String(), oldLoopExit.String(), oldLoopLatch.String(),
+		oldLoopBody.String(), loopnest.f.Name)
+
+}
+
 // blockOrdering converts loops with a check-loop-condition-at-beginning
 // to loops with a check-loop-condition-at-end.
 // This helps loops avoid extra unnecessary jumps.
