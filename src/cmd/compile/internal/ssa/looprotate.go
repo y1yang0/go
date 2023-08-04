@@ -11,7 +11,7 @@ import "fmt"
 //
 // Loop rotation transforms while/for loop to do-while style loop
 func moveValue(block *Block, val *Value) {
-	for valIdx, v := range block.Values {
+	for valIdx, v := range val.Block.Values {
 		if val != v {
 			continue
 		}
