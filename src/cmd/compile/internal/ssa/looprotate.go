@@ -4,7 +4,7 @@
 
 package ssa
 
-// loopRotate converts loops with a check-loop-condition-at-beginning
+// blockOrdering converts loops with a check-loop-condition-at-beginning
 // to loops with a check-loop-condition-at-end.
 // This helps loops avoid extra unnecessary jumps.
 //
@@ -21,7 +21,7 @@ package ssa
 //	entry:
 //	  CMPQ ...
 //	  JLT loop
-func loopRotate(f *Func) {
+func blockOrdering(f *Func) {
 	loopnest := f.loopnest()
 	if loopnest.hasIrreducible {
 		return
