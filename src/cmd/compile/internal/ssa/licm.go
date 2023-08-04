@@ -36,7 +36,7 @@ func printInvariant(val *Value, block *Block, domBlock *Block) {
 // For Load/Store and some special Values they sould be processed separately
 // even if they are loop invariants as they may have observable memory side
 // effect
-func (s *state) conflictMemory(val *Value) bool {
+func (s *state) hasMemoryAlias(val *Value) bool {
 	loads := s.loads
 	stores := s.stores
 	if val.Op == OpLoad {
@@ -87,10 +87,10 @@ func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
 	}
 }
 
-// executeUnconditionally checks if Value is guaranteed to execute during loop iterations
+// isExecuteUnconditionally checks if Value is guaranteed to execute during loop iterations
 // Otherwise, it should not be hoisted. The most common cases are invariants guarded by
 // conditional expressions.
-func (s *state) executeUnconditionally(val *Value) bool {
+func (s *state) isExecuteUnconditionally(val *Value) bool {
 	block := val.Block
 	sdom := s.loopnest.sdom
 	for _, exit := range s.loop.exits {
@@ -105,23 +105,23 @@ func (s *state) executeUnconditionally(val *Value) bool {
 // Value is considered as loop invariant if all its inputs are defined outside the loop
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
-func (s *state) tryHoist(invariants map[*Value]*Block) {
+func (s *state) tryHoist(invariants map[*Value]bool) {
 	for val, _ := range invariants {
 		// Instructions are guaranteed to execute?
-		if !s.executeUnconditionally(val) {
+		if !s.isExecuteUnconditionally(val) {
 			continue
 		}
 		// Instructions access different memory locations?
-		if !s.conflictMemory(val) {
+		if !s.hasMemoryAlias(val) {
 			continue
 		}
 		// hoist(loopnest, loop, block, val)
 	}
 }
 
-func (s *state) markInvariant(loopBlocks []*Block) map[*Value]*Block {
+func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 	loopValues := make(map[*Value]bool)
-	invariants := make(map[*Value]*Block)
+	invariants := make(map[*Value]bool)
 
 	s.loads = make([]*Value, 0)
 	s.stores = make([]*Value, 0)
@@ -173,16 +173,16 @@ func (s *state) markInvariant(loopBlocks []*Block) map[*Value]*Block {
 					// discard last memory value
 					continue
 				}
-				if _, t := invariants[use]; t {
+				if _, exist := invariants[use]; exist {
 					continue
 				}
-				if _, t := loopValues[use]; t {
+				if _, exist := loopValues[use]; exist {
 					isInvariant = false
 					break
 				}
 			}
 			if isInvariant {
-				invariants[value] = block
+				invariants[value] = true
 			}
 		}
 	}
