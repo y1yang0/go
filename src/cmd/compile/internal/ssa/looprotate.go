@@ -44,7 +44,7 @@ func loopRotate(loopnest *loopnest, loop *loop) bool {
 
 	// Rewire loop cond to loop body unconditionally
 	for len(oldLoopHeader.Succs) > 0 {
-		oldLoopHeader.removeEdge(0)
+		oldLoopHeader.removeEdgeOnly(0)
 	}
 	oldLoopHeader.Kind = BlockPlain
 	oldLoopHeader.Likely = BranchUnknown
@@ -58,7 +58,7 @@ func loopRotate(loopnest *loopnest, loop *loop) bool {
 
 	// Rewire loop latch to loop body
 	for len(oldLoopLatch.Succs) > 0 {
-		oldLoopLatch.removeEdge(0)
+		oldLoopLatch.removeEdgeOnly(0)
 	}
 	oldLoopLatch.Kind = BlockIf
 	oldLoopLatch.SetControl(headerControl)

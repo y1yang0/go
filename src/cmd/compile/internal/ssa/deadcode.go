@@ -311,6 +311,18 @@ func deadcode(f *Func) {
 	f.Blocks = f.Blocks[:i]
 }
 
+func (b *Block) removeEdgeOnly(i int) {
+	e := b.Succs[i]
+	c := e.b
+	j := e.i
+
+	// Adjust b.Succs
+	b.removeSucc(i)
+
+	// Adjust c.Preds
+	c.removePred(j)
+}
+
 // removeEdge removes the i'th outgoing edge from b (and
 // the corresponding incoming edge from b.Succs[i].b).
 func (b *Block) removeEdge(i int) {
