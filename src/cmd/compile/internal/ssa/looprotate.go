@@ -36,34 +36,33 @@ func loopRotate(loopnest *loopnest, loop *loop) bool {
 		oldLoopHeader.String(), oldLoopExit.String(), oldLoopLatch.String(),
 		oldLoopBody.String(), loopnest.f.Name)
 
-	if len(oldLoopHeader.Controls) != 0 {
-		return false
-	}
-
 	// Move conditional test from loop header to loop latch
 	headerControl := oldLoopHeader.Controls[0]
-	headerSuccs := oldLoopHeader.Succs[:]
+	headerSuccs := make([]Edge, len(oldLoopHeader.Succs))
+	copy(headerSuccs, oldLoopHeader.Succs)
 	moveValue(oldLoopLatch, headerControl)
 
 	// Rewire loop cond to loop body unconditionally
 	for len(oldLoopHeader.Succs) > 0 {
 		oldLoopHeader.removeEdge(0)
 	}
+	oldLoopHeader.Kind = BlockPlain
+	oldLoopHeader.Likely = BranchUnknown
+	oldLoopHeader.ResetControls()
 	if oldLoopBody == oldLoopLatch {
 		oldLoopHeader.AddEdgeTo(oldLoopLatch)
 	} else {
 		//TODO
 	}
-	oldLoopHeader.Kind = BlockPlain
-	oldLoopHeader.Likely = BranchUnknown
-	oldLoopHeader.ResetControls()
 
 	// Rewire loop latch to loop body
 	oldLoopLatch.Kind = BlockIf
 	oldLoopLatch.SetControl(headerControl)
 	oldLoopLatch.Succs = oldLoopLatch.Succs[:0]
-	oldLoopLatch.AddEdgeTo(headerSuccs[0].b)
-	oldLoopLatch.AddEdgeTo(headerSuccs[1].b)
+	oldLoopLatch.AddEdgeTo(oldLoopHeader) // Rewire loop latch to loop header
+	oldLoopLatch.AddEdgeTo(oldLoopExit)   // Rewire loop latch to loop exit
+	loopnest.f.dumpFile("oops")
+	fmt.Printf("== Done\n")
 	return true
 }
 
