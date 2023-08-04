@@ -118,17 +118,19 @@ func loopRotate(loopnest *loopnest, loop *loop) bool {
 	// Create new loop guard block and rewire entry block to it
 	loopGuard := loopnest.f.NewBlock(BlockIf)
 	entry := loopnest.sdom.Parent(loopHeader)
-	entry.removeEdge(0)
+	entry.removeEdgeOnly(0)
 	entry.AddEdgeTo(loopGuard)
 
 	// Create conditional test to loop guard based on existing conditional test
 	guardCond := createLoopGuardCond(loopGuard, cond)
 
-	// Rewire loop guard to determine subsequent successors
+	// Rewire loop guard to original loop header and loop exit
 	loopGuard.SetControl(guardCond)
 	loopGuard.AddEdgeTo(loopHeader)
 	loopGuard.AddEdgeTo(loopExit)
 	loopGuard.Likely = BranchLikely // loop is prefer to be executed at least once
+	fmt.Printf("==New guard cond:%v, block:%v\n",
+		guardCond.LongString(), loopGuard.LongString())
 
 	// Loop is rotated
 	fn.dumpFile("oops")
