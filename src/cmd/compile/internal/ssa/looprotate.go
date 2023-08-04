@@ -65,6 +65,22 @@ func checkLoopForm(loop *loop) bool {
 	return true
 }
 
+func createLoopGuardCond(loopGuard *Block, cond *Value) *Value {
+	guardCond := loopGuard.NewValue0IA(cond.Pos, cond.Op, cond.Type, cond.AuxInt, cond.Aux)
+	newArgs := make([]*Value, 0, len(cond.Args))
+	for _, arg := range cond.Args {
+		if arg.Op == OpPhi {
+			fmt.Printf("%v\n", arg.Args[0].LongString())
+			newArgs = append(newArgs, arg.Args[0])
+		} else {
+			fmt.Printf("%v\n", arg.LongString())
+			newArgs = append(newArgs, arg)
+		}
+	}
+	guardCond.AddArgs(newArgs...)
+	return guardCond
+}
+
 func loopRotate(loopnest *loopnest, loop *loop) bool {
 	if loopnest.f.Name != "whatthefuck" {
 		return false
@@ -77,6 +93,7 @@ func loopRotate(loopnest *loopnest, loop *loop) bool {
 		return false
 	}
 
+	fn := loopnest.f
 	loopHeader := loop.header
 	loopBody := loop.header.Succs[0].b
 	loopExit := loopHeader.Succs[1].b
@@ -99,16 +116,25 @@ func loopRotate(loopnest *loopnest, loop *loop) bool {
 	loopLatch.resetBlockIf(cond, loopHeader, loopExit)
 
 	// Create new loop guard block and rewire entry block to it
+	loopGuard := loopnest.f.NewBlock(BlockIf)
 	entry := loopnest.sdom.Parent(loopHeader)
-	loopGuard := loopnest.f.NewBlock(BlockPlain)
 	entry.removeEdge(0)
 	entry.AddEdgeTo(loopGuard)
 
-	// Clone conditional test to loop guard to determine subsequent successors
+	// Create conditional test to loop guard based on existing conditional test
+	guardCond := createLoopGuardCond(loopGuard, cond)
 
-	loopnest.f.dumpFile("oops")
+	// Rewire loop guard to determine subsequent successors
+	loopGuard.SetControl(guardCond)
+	loopGuard.AddEdgeTo(loopHeader)
+	loopGuard.AddEdgeTo(loopExit)
+	loopGuard.Likely = BranchLikely // loop is prefer to be executed at least once
+
+	// Loop is rotated
+	fn.dumpFile("oops")
 	fmt.Printf("== Done\n")
-	loopnest.f.invalidateCFG()
+
+	fn.invalidateCFG()
 	return true
 }
 
