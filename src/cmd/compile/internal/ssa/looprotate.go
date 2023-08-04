@@ -10,19 +10,61 @@ import "fmt"
 // Loop Rotation
 //
 // Loop rotation transforms while/for loop to do-while style loop
-func loopRotate(loopnest *loopnest, loop *loop) {
+func moveValue(block *Block, val *Value) {
+	for valIdx, v := range block.Values {
+		if val != v {
+			continue
+		}
+		val.moveTo(block, valIdx)
+		break
+	}
+}
+
+func loopRotate(loopnest *loopnest, loop *loop) bool {
+	if loopnest.f.pass.test != 1024 {
+		return false
+	}
 	loopnest.assembleChildren() // initialize loop children
 	loopnest.findExits()        // initialize loop exits
 
-	oldLoopCond := loop.header
+	oldLoopHeader := loop.header
 	oldLoopBody := loop.header.Succs[0].b
-	oldLoopExit := oldLoopCond.Succs[1].b
-	oldLoopLatch := oldLoopCond.Preds[1].b // where increment happens
+	oldLoopExit := oldLoopHeader.Succs[1].b
+	oldLoopLatch := oldLoopHeader.Preds[1].b // where increment happens
 
 	fmt.Printf("==START cond:%v, exit:%v latch%v, body:%v -- %v\n",
-		oldLoopCond.String(), oldLoopExit.String(), oldLoopLatch.String(),
+		oldLoopHeader.String(), oldLoopExit.String(), oldLoopLatch.String(),
 		oldLoopBody.String(), loopnest.f.Name)
 
+	if len(oldLoopHeader.Controls) != 0 {
+		return false
+	}
+
+	// Move conditional test from loop header to loop latch
+	headerControl := oldLoopHeader.Controls[0]
+	headerSuccs := oldLoopHeader.Succs[:]
+	moveValue(oldLoopLatch, headerControl)
+
+	// Rewire loop cond to loop body unconditionally
+	for len(oldLoopHeader.Succs) > 0 {
+		oldLoopHeader.removeEdge(0)
+	}
+	if oldLoopBody == oldLoopLatch {
+		oldLoopHeader.AddEdgeTo(oldLoopLatch)
+	} else {
+		//TODO
+	}
+	oldLoopHeader.Kind = BlockPlain
+	oldLoopHeader.Likely = BranchUnknown
+	oldLoopHeader.ResetControls()
+
+	// Rewire loop latch to loop body
+	oldLoopLatch.Kind = BlockIf
+	oldLoopLatch.SetControl(headerControl)
+	oldLoopLatch.Succs = oldLoopLatch.Succs[:0]
+	oldLoopLatch.AddEdgeTo(headerSuccs[0].b)
+	oldLoopLatch.AddEdgeTo(headerSuccs[1].b)
+	return true
 }
 
 // blockOrdering converts loops with a check-loop-condition-at-beginning
