@@ -87,16 +87,28 @@ func loopRotate(loopnest *loopnest, loop *loop) bool {
 		loopBody.String(), loopnest.f.Name)
 
 	// Move conditional test from loop header to loop latch
-	headerControl := loopHeader.Controls[0]
-	moveValue(loopLatch, headerControl)
+	cond := loopHeader.Controls[0]
+	moveValue(loopLatch, cond)
 
-	// Rewire header to loop body unconditionally
+	// Rewire loop header to loop body unconditionally
 	loopHeader.resetBlockPlain(loopBody)
 
-	// Rewire loop latch to header and exit based on conditional test
-	loopLatch.resetBlockIf(headerControl, loopHeader, loopExit)
+	// TODO:VERIFY LOOP FORM
+
+	// Rewire loop latch to header and exit based on new coming conditional test
+	loopLatch.resetBlockIf(cond, loopHeader, loopExit)
+
+	// Create new loop guard block and rewire entry block to it
+	entry := loopnest.sdom.Parent(loopHeader)
+	loopGuard := loopnest.f.NewBlock(BlockPlain)
+	entry.removeEdge(0)
+	entry.AddEdgeTo(loopGuard)
+
+	// Clone conditional test to loop guard to determine subsequent successors
+
 	loopnest.f.dumpFile("oops")
 	fmt.Printf("== Done\n")
+	loopnest.f.invalidateCFG()
 	return true
 }
 
