@@ -213,6 +213,6 @@ func licm(f *Func) {
 		// if invariants != nil {
 		// 	state.tryHoist(invariants)
 		// }
-		loopRotate(loopnest, loop)
+		loopnest.rotateLoop(loop)
 	}
 }

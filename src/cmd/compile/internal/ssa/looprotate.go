@@ -161,7 +161,7 @@ func createLoopGuardCond(loopGuard *Block, cond *Value) *Value {
 	return guardCond
 }
 
-func loopRotate(loopnest *loopnest, loop *loop) bool {
+func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	if loopnest.f.Name != "whatthefuck" {
 		return false
 	}
@@ -202,15 +202,16 @@ func loopRotate(loopnest *loopnest, loop *loop) bool {
 	entry.AddEdgeTo(loopGuard)
 
 	// Create conditional test to loop guard based on existing conditional test
-	guardCond := createLoopGuardCond(loopGuard, cond)
+	// TODO: If loop guard is already exists, dont insert duplicate one
+	loopGuardCond := createLoopGuardCond(loopGuard, cond)
 
 	// Rewire loop guard to original loop header and loop exit
-	loopGuard.SetControl(guardCond)
+	loopGuard.SetControl(loopGuardCond)
 	loopGuard.AddEdgeTo(loopHeader)
 	loopGuard.AddEdgeTo(loopExit)
 	loopGuard.Likely = BranchLikely // loop is prefer to be executed at least once
 	fmt.Printf("==New guard cond:%v, block:%v\n",
-		guardCond.LongString(), loopGuard.LongString())
+		loopGuardCond.LongString(), loopGuard.LongString())
 
 	// Loop is rotated
 	fn.dumpFile("oops")
