@@ -82,10 +82,14 @@ import "fmt"
 //	   ▼  ▼
 //	  loop exit
 //
-// The algorithms are summarized as follow steps
+// The detailed algorithm is summarized as following steps
 //  1. Move conditional test from loop header to loop latch, this is so-called the "rotation"
 //  2. Rewire loop header to loop body unconditionally
-//     3.
+//  3. Rewire loop latch to header and exit based on new coming conditional test
+//  4. Create new loop guard block and rewire entry block to it
+//  5. Create conditional test to loop guard based on existing conditional test
+//  6. Rewire loop guard to original loop header and loop exit
+//  7. Loop is rotated
 func moveValue(block *Block, val *Value) {
 	for valIdx, v := range val.Block.Values {
 		if val != v {
