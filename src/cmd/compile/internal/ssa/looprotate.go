@@ -9,7 +9,83 @@ import "fmt"
 // ----------------------------------------------------------------------------
 // Loop Rotation
 //
-// Loop rotation transforms while/for loop to do-while style loop
+// Loop rotation transforms while/for loop to do-while style loop. The original
+// normal loop is in form of below shape
+//
+//	   entry
+//	     │
+//	     │
+//	     │  ┌───loop latch
+//	     ▼  ▼      ▲
+//	loop header    │
+//	     │  │      │
+//	     │  └──►loop body
+//	     │
+//	     ▼
+//	 loop exit
+//
+// Then we rotate its conditional test from loop header to loop latch. And loop
+// latch determines whether loop continues or exits based on incoming test
+//
+//	  entry
+//	    │
+//	    │
+//	    │
+//	    ▼
+//	loop header◄──┐
+//	    │         │
+//	    │         │
+//	    │         │
+//	    ▼         │
+//	loop body     │
+//	    │         │
+//	    │         │
+//	    │         │
+//	    ▼         │
+//	loop latch────┘
+//	    │
+//	    │
+//	    │
+//	    ▼
+//	loop exit
+//
+// Now loop header and loop body are executed unconditionally, this changes program
+// semantics while original program executes them only if test is okay. An additional
+// loop guard is required to ensure this.
+//
+//	    entry
+//	      │
+//	      │
+//	      │
+//	      ▼
+//	  loop guard
+//	   │  │
+//	   │  │
+//	   │  │  ┌────┐
+//	┌──┘  │  │    │
+//	│     ▼  ▼    │
+//	│ loop header │
+//	│     │       │
+//	│     │       │
+//	│     │       │
+//	│     ▼       │
+//	│ loop body   │
+//	│     │       │
+//	│     │       │
+//	│     │       │
+//	│     ▼       │
+//	│ loop latch  │
+//	│     │  │    │
+//	│     │  │    │
+//	└──┐  │  └────┘
+//	   │  │
+//	   ▼  ▼
+//	  loop exit
+//
+// The algorithms are summarized as follow steps
+//  1. Move conditional test from loop header to loop latch, this is so-called the "rotation"
+//  2. Rewire loop header to loop body unconditionally
+//     3.
 func moveValue(block *Block, val *Value) {
 	for valIdx, v := range val.Block.Values {
 		if val != v {
