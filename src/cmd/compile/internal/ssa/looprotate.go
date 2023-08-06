@@ -184,7 +184,7 @@ func mergeValue(loopExit, loopHeader, loopGuard *Block) {
 		for _, arg := range val.Args {
 			if arg.Block == loopHeader {
 				if arg.Op == OpPhi {
-					// Fast path, it's a Phi!
+					// Fast path, merge val1 and Phi(val2,...) to Phi(val1, val2)
 					phi := loopExit.NewValue0(arg.Pos, OpPhi, arg.Type)
 					phiArgs := make([]*Value, 0, len(loopExit.Preds))
 					phiArgs = append(phiArgs, phi) //loop exit <- loop latch, loop guard
@@ -195,7 +195,7 @@ func mergeValue(loopExit, loopHeader, loopGuard *Block) {
 						}
 					}
 					phi.AddArgs(phiArgs...)
-					loopExit.replaceUses(val, phi)
+					loopExit.replaceUses(arg, phi)
 				} else {
 					fmt.Errorf("Not implemented\n")
 					// TODO: maybe we need to clone chain values from loop header to loop exit :(
