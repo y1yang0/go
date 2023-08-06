@@ -187,7 +187,7 @@ func mergeValue(loopExit, loopHeader, loopGuard *Block) {
 					// Fast path, merge val1 and Phi(val2,...) to Phi(val1, val2)
 					phi := loopExit.NewValue0(arg.Pos, OpPhi, arg.Type)
 					phiArgs := make([]*Value, 0, len(loopExit.Preds))
-					phiArgs = append(phiArgs, phi) //loop exit <- loop latch, loop guard
+					phiArgs = append(phiArgs, arg) //loop exit <- loop latch, loop guard
 					for k := 0; k < len(arg.Block.Preds); k++ {
 						if arg.Block.Preds[k].b == loopGuard {
 							phiArgs = append(phiArgs, arg.Args[k])
