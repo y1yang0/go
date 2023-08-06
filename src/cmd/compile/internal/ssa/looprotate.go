@@ -100,27 +100,57 @@ func moveValue(block *Block, val *Value) {
 	}
 }
 
-func (block *Block) resetBlockIf(ctrl *Value, s1, s2 *Block) {
-	for len(block.Succs) > 0 {
-		// remove all successors and keep Phi as it is
-		block.removeEdgeOnly(0)
-	}
-	block.Kind = BlockIf
-	block.SetControl(ctrl)
-	block.Succs = block.Succs[:0]
-	block.AddEdgeTo(s1)
-	block.AddEdgeTo(s2)
+// replaceSucc rewires block successor to new one, predecessor of old successor is invalidated but not removed.
+func (b *Block) replaceSucc(i int, block *Block) {
+	e := b.Succs[i]
+	idx := e.i
+	e.b.Preds[idx] = Edge{}
+	b.Succs[i] = Edge{block, idx}
+	block.Preds[idx] = Edge{block, i}
+	b.Func.invalidateCFG()
 }
 
-func (block *Block) resetBlockPlain(s1 *Block) {
-	for len(block.Succs) > 0 {
-		block.removeEdgeOnly(0)
+func rewireLoopLatch(loopLatch *Block, ctrl *Value, loopHeader, loopExit *Block) bool {
+	loopLatch.Kind = BlockIf
+	loopLatch.SetControl(ctrl)
+	exitOrder := 0
+	for i := 0; i < len(loopExit.Preds); i++ {
+		if loopExit.Preds[i].b == loopHeader {
+			loopLatch.Succs = append(loopLatch.Succs, Edge{loopExit, exitOrder})
+			return true
+		}
 	}
-	block.Kind = BlockPlain
-	block.Likely = BranchUnknown
-	block.ResetControls()
-	block.Succs = block.Succs[:0]
-	block.AddEdgeTo(s1)
+	return false
+}
+
+func rewireLoopHeader(loopHeader *Block, loopBody *Block) bool {
+	loopHeader.Kind = BlockPlain
+	loopHeader.Likely = BranchUnknown
+	loopHeader.ResetControls()
+
+	for _, succ := range loopHeader.Succs {
+		if succ.b == loopBody {
+			// Note we hard-wire block successor instead of removing edges and adding edges because we want to keep edge orders
+			loopHeader.Succs = loopBody.Succs[:1]
+			loopHeader.Succs[0] = succ
+			return true
+		}
+	}
+	return false
+}
+
+func rewireLoopGuard(loopGuard *Block, ctrl *Value, entry, loopHeader, loopExit *Block) bool {
+	loopGuard.Likely = BranchLikely // loop is prefer to be executed at least once
+	loopGuard.SetControl(ctrl)
+	loopGuard.AddEdgeTo(loopExit)
+	for i := 0; i < len(loopHeader.Preds); i++ {
+		if loopHeader.Preds[i].b == entry {
+			loopHeader.Preds[i] = Edge{loopGuard, 1}
+			loopGuard.Succs = append(loopGuard.Succs, Edge{loopHeader, i})
+			return true
+		}
+	}
+	return false
 }
 
 func checkLoopForm(loop *loop) bool {
@@ -132,14 +162,14 @@ func checkLoopForm(loop *loop) bool {
 		return false
 	}
 	loopExit := loop.header.Succs[1].b
-	illShape := true
+	illForm := true
 	for _, exit := range loop.exits {
 		if exit == loopExit {
-			illShape = false
+			illForm = false
 			break
 		}
 	}
-	if illShape {
+	if illForm {
 		return false
 	}
 	return true
@@ -188,17 +218,23 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	moveValue(loopLatch, cond)
 
 	// Rewire loop header to loop body unconditionally
-	loopHeader.resetBlockPlain(loopBody)
+	if !rewireLoopHeader(loopHeader, loopBody) {
+		fmt.Printf("++ERR1")
+		return false
+	}
 
 	// TODO:VERIFY LOOP FORM
 
 	// Rewire loop latch to header and exit based on new coming conditional test
-	loopLatch.resetBlockIf(cond, loopHeader, loopExit)
+	if !rewireLoopLatch(loopLatch, cond, loopHeader, loopExit) {
+		fmt.Printf("++ERR2")
+		return false
+	}
 
 	// Create new loop guard block and rewire entry block to it
 	loopGuard := loopnest.f.NewBlock(BlockIf)
 	entry := loopnest.sdom.Parent(loopHeader)
-	entry.removeEdgeOnly(0)
+	entry.Succs = entry.Succs[:0] // corresponding predecessor edge of loop header should be rewired later
 	entry.AddEdgeTo(loopGuard)
 
 	// Create conditional test to loop guard based on existing conditional test
@@ -206,10 +242,10 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	loopGuardCond := createLoopGuardCond(loopGuard, cond)
 
 	// Rewire loop guard to original loop header and loop exit
-	loopGuard.SetControl(loopGuardCond)
-	loopGuard.AddEdgeTo(loopHeader)
-	loopGuard.AddEdgeTo(loopExit)
-	loopGuard.Likely = BranchLikely // loop is prefer to be executed at least once
+	if !rewireLoopGuard(loopGuard, loopGuardCond, entry, loopHeader, loopExit) {
+		fmt.Printf("++ERR3")
+		return false
+	}
 	fmt.Printf("==New guard cond:%v, block:%v\n",
 		loopGuardCond.LongString(), loopGuard.LongString())
 
