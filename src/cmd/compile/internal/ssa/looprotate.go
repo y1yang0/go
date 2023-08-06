@@ -179,11 +179,10 @@ func createLoopGuardCond(loopGuard *Block, cond *Value) *Value {
 	newArgs := make([]*Value, 0, len(cond.Args))
 	for _, arg := range cond.Args {
 		if arg.Op == OpPhi {
-			fmt.Printf("%v\n", arg.Args[0].LongString())
 			newArgs = append(newArgs, arg.Args[0])
 		} else {
-			fmt.Printf("%v\n", arg.LongString())
 			newArgs = append(newArgs, arg)
+			fmt.Errorf("Not implemented\n")
 		}
 	}
 	guardCond.AddArgs(newArgs...)
@@ -246,6 +245,32 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	if !rewireLoopGuard(loopGuard, loopGuardCond, entry, loopHeader, loopExit) {
 		fn.Fatalf("Loop Rotation: Failed to rewire loop guard\n")
 		return false
+	}
+
+	// Loop exit now merges loop header and loop guard, so Phi is required if loop exit Values depends on Values that
+	// defined in loop header
+	for _, val := range loopExit.Values {
+		for _, arg := range val.Args {
+			if arg.Block == loopHeader {
+				if arg.Op == OpPhi {
+					// Fast path, it's a Phi!
+					phi := loopExit.NewValue0(arg.Pos, OpPhi, arg.Type)
+					phiArgs := make([]*Value, 0, len(loopExit.Preds))
+					phiArgs = append(phiArgs, phi) //loop exit <- loop latch, loop guard
+					for k := 0; k < len(arg.Block.Preds); k++ {
+						if arg.Block.Preds[k].b == loopGuard {
+							phiArgs = append(phiArgs, phi.Args[k])
+							break
+						}
+					}
+					phi.AddArgs(phiArgs...)
+					loopExit.replaceUses(val, phi)
+				} else {
+					fmt.Errorf("Not implemented\n")
+					// TODO: maybe we need to clone chain values from loop header to loop exit :(
+				}
+			}
+		}
 	}
 
 	// Loop is rotated
