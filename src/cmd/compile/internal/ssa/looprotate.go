@@ -100,16 +100,6 @@ func moveValue(block *Block, val *Value) {
 	}
 }
 
-// replaceSucc rewires block successor to new one, predecessor of old successor is invalidated but not removed.
-func (b *Block) replaceSucc(i int, block *Block) {
-	e := b.Succs[i]
-	idx := e.i
-	e.b.Preds[idx] = Edge{}
-	b.Succs[i] = Edge{block, idx}
-	block.Preds[idx] = Edge{block, i}
-	b.Func.invalidateCFG()
-}
-
 func rewireLoopLatch(loopLatch *Block, ctrl *Value, loopHeader, loopExit *Block) bool {
 	loopLatch.Kind = BlockIf
 	loopLatch.SetControl(ctrl)
@@ -259,7 +249,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 					phiArgs = append(phiArgs, phi) //loop exit <- loop latch, loop guard
 					for k := 0; k < len(arg.Block.Preds); k++ {
 						if arg.Block.Preds[k].b == loopGuard {
-							phiArgs = append(phiArgs, phi.Args[k])
+							phiArgs = append(phiArgs, arg.Args[k])
 							break
 						}
 					}
