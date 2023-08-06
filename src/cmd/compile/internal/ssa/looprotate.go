@@ -113,10 +113,9 @@ func (b *Block) replaceSucc(i int, block *Block) {
 func rewireLoopLatch(loopLatch *Block, ctrl *Value, loopHeader, loopExit *Block) bool {
 	loopLatch.Kind = BlockIf
 	loopLatch.SetControl(ctrl)
-	exitOrder := 0
 	for i := 0; i < len(loopExit.Preds); i++ {
 		if loopExit.Preds[i].b == loopHeader {
-			loopLatch.Succs = append(loopLatch.Succs, Edge{loopExit, exitOrder})
+			loopLatch.Succs = append(loopLatch.Succs, Edge{loopExit, i})
 			return true
 		}
 	}
@@ -131,7 +130,7 @@ func rewireLoopHeader(loopHeader *Block, loopBody *Block) bool {
 	for _, succ := range loopHeader.Succs {
 		if succ.b == loopBody {
 			// Note we hard-wire block successor instead of removing edges and adding edges because we want to keep edge orders
-			loopHeader.Succs = loopBody.Succs[:1]
+			loopHeader.Succs = loopHeader.Succs[:1]
 			loopHeader.Succs[0] = succ
 			return true
 		}
@@ -199,11 +198,13 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	// Before rotation, ensure given loop is in form of normal shape
 	loopnest.assembleChildren() // initialize loop children
 	loopnest.findExits()        // initialize loop exits
+	fn := loopnest.f
+
 	if !checkLoopForm(loop) {
+		fn.Fatalf("Loop Rotation: Loop %v not in form of normal shape\n", loop.header)
 		return false
 	}
 
-	fn := loopnest.f
 	loopHeader := loop.header
 	loopBody := loop.header.Succs[0].b
 	loopExit := loopHeader.Succs[1].b
@@ -219,7 +220,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Rewire loop header to loop body unconditionally
 	if !rewireLoopHeader(loopHeader, loopBody) {
-		fmt.Printf("++ERR1")
+		fn.Fatalf("Loop Rotation: Failed to rewire loop header\n")
 		return false
 	}
 
@@ -227,7 +228,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Rewire loop latch to header and exit based on new coming conditional test
 	if !rewireLoopLatch(loopLatch, cond, loopHeader, loopExit) {
-		fmt.Printf("++ERR2")
+		fn.Fatalf("Loop Rotation: Failed to rewire loop latch\n")
 		return false
 	}
 
@@ -243,11 +244,9 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Rewire loop guard to original loop header and loop exit
 	if !rewireLoopGuard(loopGuard, loopGuardCond, entry, loopHeader, loopExit) {
-		fmt.Printf("++ERR3")
+		fn.Fatalf("Loop Rotation: Failed to rewire loop guard\n")
 		return false
 	}
-	fmt.Printf("==New guard cond:%v, block:%v\n",
-		loopGuardCond.LongString(), loopGuard.LongString())
 
 	// Loop is rotated
 	fn.dumpFile("oops")
