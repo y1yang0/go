@@ -179,6 +179,32 @@ func createLoopGuardCond(loopGuard *Block, cond *Value) *Value {
 	return guardCond
 }
 
+func mergeValue(loopExit, loopHeader, loopGuard *Block) {
+	for _, val := range loopExit.Values {
+		for _, arg := range val.Args {
+			if arg.Block == loopHeader {
+				if arg.Op == OpPhi {
+					// Fast path, it's a Phi!
+					phi := loopExit.NewValue0(arg.Pos, OpPhi, arg.Type)
+					phiArgs := make([]*Value, 0, len(loopExit.Preds))
+					phiArgs = append(phiArgs, phi) //loop exit <- loop latch, loop guard
+					for k := 0; k < len(arg.Block.Preds); k++ {
+						if arg.Block.Preds[k].b == loopGuard {
+							phiArgs = append(phiArgs, arg.Args[k])
+							break
+						}
+					}
+					phi.AddArgs(phiArgs...)
+					loopExit.replaceUses(val, phi)
+				} else {
+					fmt.Errorf("Not implemented\n")
+					// TODO: maybe we need to clone chain values from loop header to loop exit :(
+				}
+			}
+		}
+	}
+}
+
 func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	if loopnest.f.Name != "whatthefuck" {
 		return false
@@ -239,29 +265,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Loop exit now merges loop header and loop guard, so Phi is required if loop exit Values depends on Values that
 	// defined in loop header
-	for _, val := range loopExit.Values {
-		for _, arg := range val.Args {
-			if arg.Block == loopHeader {
-				if arg.Op == OpPhi {
-					// Fast path, it's a Phi!
-					phi := loopExit.NewValue0(arg.Pos, OpPhi, arg.Type)
-					phiArgs := make([]*Value, 0, len(loopExit.Preds))
-					phiArgs = append(phiArgs, phi) //loop exit <- loop latch, loop guard
-					for k := 0; k < len(arg.Block.Preds); k++ {
-						if arg.Block.Preds[k].b == loopGuard {
-							phiArgs = append(phiArgs, arg.Args[k])
-							break
-						}
-					}
-					phi.AddArgs(phiArgs...)
-					loopExit.replaceUses(val, phi)
-				} else {
-					fmt.Errorf("Not implemented\n")
-					// TODO: maybe we need to clone chain values from loop header to loop exit :(
-				}
-			}
-		}
-	}
+	mergeValue(loopExit, loopHeader, loopGuard)
 
 	// Loop is rotated
 	fn.dumpFile("oops")
