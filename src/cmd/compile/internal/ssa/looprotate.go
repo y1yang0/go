@@ -112,6 +112,7 @@ func checkLoopForm(loop *loop) string {
 	}
 	loopExit := loop.header.Succs[1].b
 	if len(loopExit.Preds) != 1 {
+		// TODO: Maybe this is too strict
 		return "loop exit requries 1 predecessor"
 	}
 	illForm := true
@@ -140,43 +141,45 @@ func (lf *loopForm) moveCond() *Value {
 	return cond
 }
 
-func (lf *loopForm) rewireLoopHeader() bool {
+func (lf *loopForm) rewireLoopHeader() {
 	loopHeader := lf.loopHeader
 	loopBody := lf.loopBody
 
 	loopHeader.Kind = BlockPlain
 	loopHeader.Likely = BranchUnknown
 	loopHeader.ResetControls()
+	var edge Edge
 	for _, succ := range loopHeader.Succs {
 		if succ.b == loopBody {
-			// loopHeader -> loopExit
-			loopHeader.Succs = loopHeader.Succs[:1]
-			loopHeader.Succs[0] = succ
-			return true
+			edge = succ
+			break
 		}
 	}
-	return false
+	loopHeader.Succs = loopHeader.Succs[:1]
+	// loopHeader -> loopExit
+	loopHeader.Succs[0] = edge
 }
 
-func (lf *loopForm) rewireLoopLatch(ctrl *Value) bool {
+func (lf *loopForm) rewireLoopLatch(ctrl *Value) {
 	loopHeader := lf.loopHeader
 	loopExit := lf.loopExit
 	loopLatch := lf.loopLatch
 
 	loopLatch.Kind = BlockIf
 	loopLatch.SetControl(ctrl)
+	var idx int
 	for i := 0; i < len(loopExit.Preds); i++ {
 		if loopExit.Preds[i].b == loopHeader {
-			loopLatch.Succs = append(loopLatch.Succs, Edge{loopExit, i})
-			// loopLatch -> loopHeader(0), loopExit(1)
-			loopExit.Preds[i] = Edge{loopLatch, 1}
-			return true
+			idx = i
+			break
 		}
 	}
-	return false
+	loopLatch.Succs = append(loopLatch.Succs, Edge{loopExit, idx})
+	// loopLatch -> loopHeader(0), loopExit(1)
+	loopExit.Preds[idx] = Edge{loopLatch, 1}
 }
 
-func (lf *loopForm) rewireLoopGuard(guardCond *Value) bool {
+func (lf *loopForm) rewireLoopGuard(guardCond *Value) {
 	loopHeader := lf.loopHeader
 	loopExit := lf.loopExit
 	loopGuard := lf.loopGuard
@@ -185,15 +188,16 @@ func (lf *loopForm) rewireLoopGuard(guardCond *Value) bool {
 	loopGuard.Likely = BranchLikely // loop is prefer to be executed at least once
 	loopGuard.SetControl(guardCond)
 	loopGuard.AddEdgeTo(loopExit)
+	var idx int
 	for i := 0; i < len(loopHeader.Preds); i++ {
 		if loopHeader.Preds[i].b == entry {
-			loopGuard.Succs = append(loopGuard.Succs, Edge{loopHeader, i})
-			// loopGuard -> loopExit(0), loopHeader(1)
-			loopHeader.Preds[i] = Edge{loopGuard, 1}
-			return true
+			idx = i
+			break
 		}
 	}
-	return false
+	loopGuard.Succs = append(loopGuard.Succs, Edge{loopHeader, idx})
+	// loopGuard -> loopExit(0), loopHeader(1)
+	loopHeader.Preds[idx] = Edge{loopGuard, 1}
 }
 
 func (lf *loopForm) createLoopGuard(cond *Value) *Value {
@@ -284,25 +288,16 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	cond := lf.moveCond()
 
 	// Rewire loop header to loop body unconditionally
-	if !lf.rewireLoopHeader() {
-		fmt.Printf("Loop Rotation: Failed to rewire loop header\n")
-		return false
-	}
+	lf.rewireLoopHeader()
 
 	// Rewire loop latch to header and exit based on new coming conditional test
-	if !lf.rewireLoopLatch(cond) {
-		fmt.Printf("Loop Rotation: Failed to rewire loop latch\n")
-		return false
-	}
+	lf.rewireLoopLatch(cond)
 
 	// Create new loop guard block and rewire entry block to it
 	guardCond := lf.createLoopGuard(cond)
 
 	// Rewire loop guard to original loop header and loop exit
-	if !lf.rewireLoopGuard(guardCond) {
-		fmt.Printf("Loop Rotation: Failed to rewire loop guard\n")
-		return false
-	}
+	lf.rewireLoopGuard(guardCond)
 
 	// Merge any uses in loop exit that not dominated by loop guard
 	lf.mergeLoopExit()
