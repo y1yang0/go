@@ -16,9 +16,9 @@ import "fmt"
 //	     │
 //	     │
 //	     │  ┌───loop latch
-//	     ▼  ▼      ▲
-//	loop header    │
-//	     │  │      │
+//	     ▼  ▼       ▲
+//	loop header     │
+//	     │  │       │
 //	     │  └──►loop body
 //	     │
 //	     ▼
@@ -179,15 +179,16 @@ func createLoopGuardCond(loopGuard *Block, cond *Value) *Value {
 	return guardCond
 }
 
-func mergeValue(loopExit, loopHeader, loopGuard *Block) {
+func mergeLoopExit(loopExit, loopHeader, loopGuard *Block) {
 	for _, val := range loopExit.Values {
 		for _, arg := range val.Args {
 			if arg.Block == loopHeader {
 				if arg.Op == OpPhi {
-					// Fast path, merge val1 and Phi(val2,...) to Phi(val1, val2)
-					phi := loopExit.NewValue0(arg.Pos, OpPhi, arg.Type)
+					// Allocate floating new phi
+					phi := loopExit.Func.newValueNoBlock(OpPhi, arg.Type, arg.Pos)
+					// loop exit <- loop latch(1), loop guard(2)
 					phiArgs := make([]*Value, 0, len(loopExit.Preds))
-					phiArgs = append(phiArgs, arg) //loop exit <- loop latch, loop guard
+					phiArgs = append(phiArgs, arg)
 					for k := 0; k < len(arg.Block.Preds); k++ {
 						if arg.Block.Preds[k].b == loopGuard {
 							phiArgs = append(phiArgs, arg.Args[k])
@@ -196,9 +197,11 @@ func mergeValue(loopExit, loopHeader, loopGuard *Block) {
 					}
 					phi.AddArgs(phiArgs...)
 					loopExit.replaceUses(arg, phi)
+					phi.Block = loopExit // move phi into loopExit after replaceUses
 				} else {
 					fmt.Errorf("Not implemented\n")
 					// TODO: maybe we need to clone chain values from loop header to loop exit :(
+					// OR simply bail out compilation
 				}
 			}
 		}
@@ -239,8 +242,6 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		return false
 	}
 
-	// TODO:VERIFY LOOP FORM
-
 	// Rewire loop latch to header and exit based on new coming conditional test
 	if !rewireLoopLatch(loopLatch, cond, loopHeader, loopExit) {
 		fn.Fatalf("Loop Rotation: Failed to rewire loop latch\n")
@@ -255,6 +256,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Create conditional test to loop guard based on existing conditional test
 	// TODO: If loop guard is already exists, dont insert duplicate one
+	// TODO: If this is inner loop, dont insert loop guard
 	loopGuardCond := createLoopGuardCond(loopGuard, cond)
 
 	// Rewire loop guard to original loop header and loop exit
@@ -265,7 +267,9 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Loop exit now merges loop header and loop guard, so Phi is required if loop exit Values depends on Values that
 	// defined in loop header
-	mergeValue(loopExit, loopHeader, loopGuard)
+	mergeLoopExit(loopExit, loopHeader, loopGuard)
+
+	// TODO: Verify rotated loop form
 
 	// Loop is rotated
 	fn.dumpFile("oops")
