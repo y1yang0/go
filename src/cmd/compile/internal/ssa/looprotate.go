@@ -197,7 +197,7 @@ func mergeLoopExit(loopExit, loopHeader, loopGuard *Block) {
 					}
 					phi.AddArgs(phiArgs...)
 					loopExit.replaceUses(arg, phi)
-					phi.Block = loopExit // move phi into loopExit after replaceUses
+					loopExit.placeValue(phi) // move phi into loopExit after replaceUses
 				} else {
 					fmt.Errorf("Not implemented\n")
 					// TODO: maybe we need to clone chain values from loop header to loop exit :(
