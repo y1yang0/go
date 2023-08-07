@@ -90,24 +90,67 @@ import "fmt"
 //  5. Create conditional test to loop guard based on existing conditional test
 //  6. Rewire loop guard to original loop header and loop exit
 //  7. Loop is rotated
-func moveValue(block *Block, val *Value) {
-	for valIdx, v := range val.Block.Values {
-		if val != v {
-			continue
-		}
-		val.moveTo(block, valIdx)
-		break
-	}
+
+type loopForm struct {
+	ln         *loopnest
+	loopHeader *Block
+	loopBody   *Block
+	loopExit   *Block
+	loopLatch  *Block // where increment happens
+	loopGuard  *Block
+	guardCond  *Value
 }
 
-func rewireLoopHeader(loopHeader *Block, loopBody *Block) bool {
+func checkLoopForm(loop *loop) string {
+	loopHeader := loop.header
+	// loopHeader <- entry, loopLatch?
+	if len(loopHeader.Preds) != 2 {
+		return "loop header requires 2 predecessors"
+	}
+	// loopHeader -> loopBody, loopExit(1) ?
+	if loopHeader.Kind != BlockIf {
+		return "loop header must be BlockIf"
+	}
+	loopExit := loop.header.Succs[1].b
+	if len(loopExit.Preds) != 1 {
+		return "loop exit requries 1 predecessor"
+	}
+	illForm := true
+	for _, exit := range loop.exits {
+		if exit == loopExit {
+			illForm = false
+			break
+		}
+	}
+	if illForm {
+		return "loop exit is invalid"
+	}
+
+	return ""
+}
+
+func (lf *loopForm) moveCond() *Value {
+	cond := lf.loopHeader.Controls[0]
+	for valIdx, v := range cond.Block.Values {
+		if cond != v {
+			continue
+		}
+		cond.moveTo(lf.loopLatch, valIdx)
+		break
+	}
+	return cond
+}
+
+func (lf *loopForm) rewireLoopHeader() bool {
+	loopHeader := lf.loopHeader
+	loopBody := lf.loopBody
+
 	loopHeader.Kind = BlockPlain
 	loopHeader.Likely = BranchUnknown
 	loopHeader.ResetControls()
-
 	for _, succ := range loopHeader.Succs {
 		if succ.b == loopBody {
-			// loopHeader -> loopBody, loopExit
+			// loopHeader -> loopExit
 			loopHeader.Succs = loopHeader.Succs[:1]
 			loopHeader.Succs[0] = succ
 			return true
@@ -116,7 +159,11 @@ func rewireLoopHeader(loopHeader *Block, loopBody *Block) bool {
 	return false
 }
 
-func rewireLoopLatch(loopLatch *Block, ctrl *Value, loopHeader, loopExit *Block) bool {
+func (lf *loopForm) rewireLoopLatch(ctrl *Value) bool {
+	loopHeader := lf.loopHeader
+	loopExit := lf.loopExit
+	loopLatch := lf.loopLatch
+
 	loopLatch.Kind = BlockIf
 	loopLatch.SetControl(ctrl)
 	for i := 0; i < len(loopExit.Preds); i++ {
@@ -130,9 +177,14 @@ func rewireLoopLatch(loopLatch *Block, ctrl *Value, loopHeader, loopExit *Block)
 	return false
 }
 
-func rewireLoopGuard(loopGuard *Block, ctrl *Value, entry, loopHeader, loopExit *Block) bool {
+func (lf *loopForm) rewireLoopGuard(guardCond *Value) bool {
+	loopHeader := lf.loopHeader
+	loopExit := lf.loopExit
+	loopGuard := lf.loopGuard
+	entry := lf.ln.sdom.Parent(loopHeader)
+
 	loopGuard.Likely = BranchLikely // loop is prefer to be executed at least once
-	loopGuard.SetControl(ctrl)
+	loopGuard.SetControl(guardCond)
 	loopGuard.AddEdgeTo(loopExit)
 	for i := 0; i < len(loopHeader.Preds); i++ {
 		if loopHeader.Preds[i].b == entry {
@@ -143,28 +195,6 @@ func rewireLoopGuard(loopGuard *Block, ctrl *Value, entry, loopHeader, loopExit 
 		}
 	}
 	return false
-}
-
-func checkLoopForm(loop *loop) bool {
-	loopHeader := loop.header
-	if loopHeader.Kind != BlockIf {
-		return false
-	}
-	if len(loopHeader.Preds) != 2 {
-		return false
-	}
-	loopExit := loop.header.Succs[1].b
-	illForm := true
-	for _, exit := range loop.exits {
-		if exit == loopExit {
-			illForm = false
-			break
-		}
-	}
-	if illForm {
-		return false
-	}
-	return true
 }
 
 func createLoopGuardCond(loopGuard *Block, cond *Value) *Value {
@@ -182,24 +212,42 @@ func createLoopGuardCond(loopGuard *Block, cond *Value) *Value {
 	return guardCond
 }
 
-func mergeLoopExit(loopExit, loopHeader, loopGuard *Block) {
+// Create conditional test to loop guard based on existing conditional test
+// TODO: If loop guard is already exists, dont insert duplicate one
+// TODO: If this is inner loop, dont insert loop guard
+func (lf *loopForm) createLoopGuard(cond *Value) *Value {
+	loopGuard := lf.ln.f.NewBlock(BlockIf)
+	lf.loopGuard = loopGuard
+
+	entry := lf.ln.sdom.Parent(lf.loopHeader)
+	entry.Succs = entry.Succs[:0] // corresponding predecessor edge of loop header should be rewired later
+	entry.AddEdgeTo(loopGuard)
+
+	return createLoopGuardCond(loopGuard, cond)
+}
+
+// Loop exit now merges loop header and loop guard, so Phi is required if loop
+// exit Values depends on Values that defined in loop header
+func (loopnest *loopnest) mergeLoopExit(loopExit, loopHeader, loopGuard *Block) {
 	for _, val := range loopExit.Values {
-		for _, arg := range val.Args {
-			if arg.Block == loopHeader {
-				if arg.Op == OpPhi {
+		for _, use := range val.Args {
+			// If use is not dominated by loopGuard, create new Phi and merge
+			// incoming values
+			if !loopnest.sdom.IsAncestorEq(loopGuard, use.Block) {
+				if use.Op == OpPhi {
 					// Allocate floating new phi
-					phi := loopExit.Func.newValueNoBlock(OpPhi, arg.Type, arg.Pos)
-					// loop exit <- loop latch(1), loop guard(2)
+					phi := loopExit.Func.newValueNoBlock(OpPhi, use.Type, use.Pos)
+					// loop exit <- loop latch(0), loop guard(1)
 					phiArgs := make([]*Value, 0, len(loopExit.Preds))
-					phiArgs = append(phiArgs, arg)
-					for k := 0; k < len(arg.Block.Preds); k++ {
-						if arg.Block.Preds[k].b == loopGuard {
-							phiArgs = append(phiArgs, arg.Args[k])
+					phiArgs = append(phiArgs, use)
+					for k := 0; k < len(use.Block.Preds); k++ {
+						if use.Block.Preds[k].b == loopGuard {
+							phiArgs = append(phiArgs, use.Args[k])
 							break
 						}
 					}
 					phi.AddArgs(phiArgs...)
-					loopExit.replaceUses(arg, phi)
+					loopExit.replaceUses(use, phi)
 					loopExit.placeValue(phi) // move phi into loopExit after replaceUses
 				} else {
 					fmt.Errorf("Not implemented\n")
@@ -212,20 +260,23 @@ func mergeLoopExit(loopExit, loopHeader, loopGuard *Block) {
 }
 
 func (loopnest *loopnest) rotateLoop(loop *loop) bool {
-	if loopnest.f.Name != "whatthefuck" {
-		return false
-	}
 
-	// Before rotation, ensure given loop is in form of normal shape
 	loopnest.assembleChildren() // initialize loop children
 	loopnest.findExits()        // initialize loop exits
 	fn := loopnest.f
 
-	if !checkLoopForm(loop) {
-		fmt.Printf("Loop Rotation: Loop %v not in form of normal shape\n", loop.header)
+	// Before rotation, ensure given loop is in form of normal shape
+	if msg := checkLoopForm(loop); msg != "" {
+		fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
 		return false
 	}
 
+	lf := &loopForm{
+		loopHeader: loop.header,
+		loopBody:   loop.header.Succs[0].b,
+		loopExit:   loopHeader.Succs[1].b,
+		loopLatch:  loopHeader.Preds[1].b,
+	}
 	loopHeader := loop.header
 	loopBody := loop.header.Succs[0].b
 	loopExit := loopHeader.Succs[1].b
@@ -236,41 +287,31 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		loopBody.String(), loopnest.f.Name)
 
 	// Move conditional test from loop header to loop latch
-	cond := loopHeader.Controls[0]
-	moveValue(loopLatch, cond)
+	cond := lf.moveCond()
 
 	// Rewire loop header to loop body unconditionally
-	if !rewireLoopHeader(loopHeader, loopBody) {
+	if !lf.rewireLoopHeader() {
 		fmt.Printf("Loop Rotation: Failed to rewire loop header\n")
 		return false
 	}
 
 	// Rewire loop latch to header and exit based on new coming conditional test
-	if !rewireLoopLatch(loopLatch, cond, loopHeader, loopExit) {
+	if !lf.rewireLoopLatch(cond) {
 		fmt.Printf("Loop Rotation: Failed to rewire loop latch\n")
 		return false
 	}
 
 	// Create new loop guard block and rewire entry block to it
-	loopGuard := loopnest.f.NewBlock(BlockIf)
-	entry := loopnest.sdom.Parent(loopHeader)
-	entry.Succs = entry.Succs[:0] // corresponding predecessor edge of loop header should be rewired later
-	entry.AddEdgeTo(loopGuard)
-
-	// Create conditional test to loop guard based on existing conditional test
-	// TODO: If loop guard is already exists, dont insert duplicate one
-	// TODO: If this is inner loop, dont insert loop guard
-	loopGuardCond := createLoopGuardCond(loopGuard, cond)
+	guardCond := lf.createLoopGuard(cond)
 
 	// Rewire loop guard to original loop header and loop exit
-	if !rewireLoopGuard(loopGuard, loopGuardCond, entry, loopHeader, loopExit) {
+	if !lf.rewireLoopGuard(guardCond) {
 		fmt.Printf("Loop Rotation: Failed to rewire loop guard\n")
 		return false
 	}
 
-	// Loop exit now merges loop header and loop guard, so Phi is required if loop exit Values depends on Values that
-	// defined in loop header
-	mergeLoopExit(loopExit, loopHeader, loopGuard)
+	// Merge any uses in loop exit that not dominated by loop guard
+	loopnest.mergeLoopExit(loopExit, loopHeader, loopGuard)
 
 	// TODO: Verify rotated loop form
 
@@ -283,7 +324,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 }
 
 // blockOrdering converts loops with a check-loop-condition-at-beginning
-// to loops with a check-loop-condition-at-end.
+// to loops with a check-loop-condition-at-end by reordering blocks.
 // This helps loops avoid extra unnecessary jumps.
 //
 //	 loop:
