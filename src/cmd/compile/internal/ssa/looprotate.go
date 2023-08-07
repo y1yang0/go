@@ -49,9 +49,9 @@ import "fmt"
 //	    ▼
 //	loop exit
 //
-// Now loop header and loop body are executed unconditionally, this changes program
-// semantics while original program executes them only if test is okay. An additional
-// loop guard is required to ensure this.
+// Now loop header and loop body are executed unconditionally, this may changes
+// program semantics while original program executes them only if test is okay.
+// An additional loop guard is required to ensure this.
 //
 //	    entry
 //	      │
@@ -100,13 +100,18 @@ type loopForm struct {
 	loopGuard  *Block
 }
 
+func (lf *loopForm) LongString() string {
+	return fmt.Sprintf("Loop %v(B/%v E/%v L/%v G/%v)",
+		lf.loopHeader, lf.loopBody, lf.loopExit, lf.loopLatch, lf.loopGuard)
+}
+
 func checkLoopForm(loop *loop) string {
 	loopHeader := loop.header
-	// loopHeader <- entry, loopLatch?
+	// loopHeader <- entry(0), loopLatch(1)?
 	if len(loopHeader.Preds) != 2 {
 		return "loop header requires 2 predecessors"
 	}
-	// loopHeader -> loopBody, loopExit(1) ?
+	// loopHeader -> loopBody(0), loopExit(1) ?
 	if loopHeader.Kind != BlockIf {
 		return "loop header must be BlockIf"
 	}
@@ -156,7 +161,7 @@ func (lf *loopForm) rewireLoopHeader() {
 		}
 	}
 	loopHeader.Succs = loopHeader.Succs[:1]
-	// loopHeader -> loopExit
+	// loopHeader -> loopExit(0)
 	loopHeader.Succs[0] = edge
 }
 
@@ -187,7 +192,6 @@ func (lf *loopForm) rewireLoopGuard(guardCond *Value) {
 
 	loopGuard.Likely = BranchLikely // loop is prefer to be executed at least once
 	loopGuard.SetControl(guardCond)
-	loopGuard.AddEdgeTo(loopExit)
 	var idx int
 	for i := 0; i < len(loopHeader.Preds); i++ {
 		if loopHeader.Preds[i].b == entry {
@@ -196,20 +200,23 @@ func (lf *loopForm) rewireLoopGuard(guardCond *Value) {
 		}
 	}
 	loopGuard.Succs = append(loopGuard.Succs, Edge{loopHeader, idx})
-	// loopGuard -> loopExit(0), loopHeader(1)
-	loopHeader.Preds[idx] = Edge{loopGuard, 1}
+	loopGuard.AddEdgeTo(loopExit)
+	// loopGuard -> loopHeader(0), loopExit(1)
+	loopHeader.Preds[idx] = Edge{loopGuard, 0}
 }
 
 func (lf *loopForm) createLoopGuard(cond *Value) *Value {
-	// Create loop guard block, rewire entry to it
+	// Create loop guard block,
 	loopGuard := lf.ln.f.NewBlock(BlockIf)
 	lf.loopGuard = loopGuard
 
+	// Rewire entry to loop guard instead of original loop header
+	// entry -> loopGuard
 	entry := lf.ln.sdom.Parent(lf.loopHeader)
-	entry.Succs = entry.Succs[:0] // corresponding predecessor edge of loop header should be rewired later
+	entry.Succs = entry.Succs[:0]
 	entry.AddEdgeTo(loopGuard)
 
-	// Create conditional test to loop guard based on existing conditional test
+	// Create conditional test for loop guard based on existing conditional test
 	// TODO: If loop guard is already exists, dont insert duplicate one
 	// TODO: If this is inner loop, dont insert loop guard
 	guardCond := loopGuard.NewValue0IA(cond.Pos, cond.Op, cond.Type, cond.AuxInt, cond.Aux)
@@ -264,8 +271,7 @@ func (lf *loopForm) mergeLoopExit() {
 func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	loopnest.assembleChildren() // initialize loop children
 	loopnest.findExits()        // initialize loop exits
-	fn := loopnest.f
-	if fn.Name != "whatthefuck" {
+	if loopnest.f.Name != "whatthefuck" {
 		return false
 	}
 
@@ -305,10 +311,11 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	// TODO: Verify rotated loop form
 
 	// Loop is rotated
-	fn.dumpFile("oops")
-	fmt.Printf("== Done\n")
+	// fn.dumpFile("oops")
+	f := loopnest.f
+	fmt.Printf("Loop Rotation: %v\n %v", lf.LongString(), f.Name)
 
-	fn.invalidateCFG()
+	f.invalidateCFG()
 	return true
 }
 
