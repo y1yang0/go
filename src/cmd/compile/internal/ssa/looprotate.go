@@ -223,10 +223,10 @@ func (lf *loopForm) createLoopGuard(cond *Value) *Value {
 	newArgs := make([]*Value, 0, len(cond.Args))
 	for _, arg := range cond.Args {
 		if arg.Op == OpPhi {
+			// loopHeader <- entry(0), loopLatch(1)
 			newArgs = append(newArgs, arg.Args[0])
 		} else {
 			newArgs = append(newArgs, arg)
-			fmt.Errorf("Not implemented\n")
 		}
 	}
 	guardCond.AddArgs(newArgs...)
@@ -238,11 +238,12 @@ func (lf *loopForm) createLoopGuard(cond *Value) *Value {
 func (lf *loopForm) mergeLoopExit() {
 	loopExit := lf.loopExit
 	loopGuard := lf.loopGuard
+	sdom := lf.ln.sdom
 	for _, val := range loopExit.Values {
 		for _, use := range val.Args {
-			// If use is not dominated by loopGuard, create new Phi and merge
-			// incoming values
-			if !lf.ln.sdom.IsAncestorEq(loopGuard, use.Block) {
+			// If use is not dominated by loopGuard, merge is requred in such
+			// case, create new Phi and merge use with its argument
+			if !sdom.IsAncestorEq(use.Block, loopGuard) {
 				if use.Op == OpPhi {
 					// Allocate floating new phi
 					phi := loopExit.Func.newValueNoBlock(OpPhi, use.Type, use.Pos)
@@ -250,7 +251,8 @@ func (lf *loopForm) mergeLoopExit() {
 					phiArgs := make([]*Value, 0, len(loopExit.Preds))
 					phiArgs = append(phiArgs, use)
 					for k := 0; k < len(use.Block.Preds); k++ {
-						if use.Block.Preds[k].b == loopGuard {
+						// argument block of use must dominate loopGuard
+						if sdom.IsAncestorEq(use.Block.Preds[k].b, loopGuard) {
 							phiArgs = append(phiArgs, use.Args[k])
 							break
 						}
@@ -259,10 +261,12 @@ func (lf *loopForm) mergeLoopExit() {
 					loopExit.replaceUses(use, phi)
 					loopExit.placeValue(phi) // move phi into loopExit after replaceUses
 				} else {
-					fmt.Errorf("Not implemented\n")
+					panic("not implement")
 					// TODO: maybe we need to clone chain values from loop header to loop exit :(
 					// OR simply bail out compilation
 				}
+			} else {
+				// Okay, use dominates loopGuard, merge is not required.
 			}
 		}
 	}
@@ -271,7 +275,7 @@ func (lf *loopForm) mergeLoopExit() {
 func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	loopnest.assembleChildren() // initialize loop children
 	loopnest.findExits()        // initialize loop exits
-	if loopnest.f.Name != "whatthefuck" {
+	if loopnest.f.Name != "IndexRabinKarpBytes" {
 		return false
 	}
 
@@ -311,9 +315,11 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	// TODO: Verify rotated loop form
 
 	// Loop is rotated
-	// fn.dumpFile("oops")
 	f := loopnest.f
-	fmt.Printf("Loop Rotation: %v\n %v", lf.LongString(), f.Name)
+	if f.Name == "IndexRabinKarp" || f.Name == "IndexRabinKarpBytes" {
+		f.dumpFile("oops")
+	}
+	fmt.Printf("Loop Rotation: %v %v\n", lf.LongString(), f.Name)
 
 	f.invalidateCFG()
 	return true
