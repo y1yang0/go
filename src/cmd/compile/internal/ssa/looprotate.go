@@ -261,6 +261,9 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	loopnest.assembleChildren() // initialize loop children
 	loopnest.findExits()        // initialize loop exits
 	fn := loopnest.f
+	if fn.Name != "whatthefuck" {
+		return false
+	}
 
 	// Before rotation, ensure given loop is in form of normal shape
 	if msg := checkLoopForm(loop); msg != "" {
@@ -270,6 +273,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	loopHeader := loop.header
 	lf := &loopForm{
+		ln:         loopnest,
 		loopHeader: loopHeader,
 		loopBody:   loop.header.Succs[0].b,
 		loopExit:   loopHeader.Succs[1].b,
