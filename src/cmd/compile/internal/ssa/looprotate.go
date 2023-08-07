@@ -100,18 +100,6 @@ func moveValue(block *Block, val *Value) {
 	}
 }
 
-func rewireLoopLatch(loopLatch *Block, ctrl *Value, loopHeader, loopExit *Block) bool {
-	loopLatch.Kind = BlockIf
-	loopLatch.SetControl(ctrl)
-	for i := 0; i < len(loopExit.Preds); i++ {
-		if loopExit.Preds[i].b == loopHeader {
-			loopLatch.Succs = append(loopLatch.Succs, Edge{loopExit, i})
-			return true
-		}
-	}
-	return false
-}
-
 func rewireLoopHeader(loopHeader *Block, loopBody *Block) bool {
 	loopHeader.Kind = BlockPlain
 	loopHeader.Likely = BranchUnknown
@@ -119,9 +107,23 @@ func rewireLoopHeader(loopHeader *Block, loopBody *Block) bool {
 
 	for _, succ := range loopHeader.Succs {
 		if succ.b == loopBody {
-			// Note we hard-wire block successor instead of removing edges and adding edges because we want to keep edge orders
+			// loopHeader -> loopBody, loopExit
 			loopHeader.Succs = loopHeader.Succs[:1]
 			loopHeader.Succs[0] = succ
+			return true
+		}
+	}
+	return false
+}
+
+func rewireLoopLatch(loopLatch *Block, ctrl *Value, loopHeader, loopExit *Block) bool {
+	loopLatch.Kind = BlockIf
+	loopLatch.SetControl(ctrl)
+	for i := 0; i < len(loopExit.Preds); i++ {
+		if loopExit.Preds[i].b == loopHeader {
+			loopLatch.Succs = append(loopLatch.Succs, Edge{loopExit, i})
+			// loopLatch -> loopHeader(0), loopExit(1)
+			loopExit.Preds[i] = Edge{loopLatch, 1}
 			return true
 		}
 	}
@@ -134,8 +136,9 @@ func rewireLoopGuard(loopGuard *Block, ctrl *Value, entry, loopHeader, loopExit 
 	loopGuard.AddEdgeTo(loopExit)
 	for i := 0; i < len(loopHeader.Preds); i++ {
 		if loopHeader.Preds[i].b == entry {
-			loopHeader.Preds[i] = Edge{loopGuard, 1}
 			loopGuard.Succs = append(loopGuard.Succs, Edge{loopHeader, i})
+			// loopGuard -> loopExit(0), loopHeader(1)
+			loopHeader.Preds[i] = Edge{loopGuard, 1}
 			return true
 		}
 	}
@@ -219,7 +222,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	fn := loopnest.f
 
 	if !checkLoopForm(loop) {
-		fn.Fatalf("Loop Rotation: Loop %v not in form of normal shape\n", loop.header)
+		fmt.Printf("Loop Rotation: Loop %v not in form of normal shape\n", loop.header)
 		return false
 	}
 
@@ -238,13 +241,13 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Rewire loop header to loop body unconditionally
 	if !rewireLoopHeader(loopHeader, loopBody) {
-		fn.Fatalf("Loop Rotation: Failed to rewire loop header\n")
+		fmt.Printf("Loop Rotation: Failed to rewire loop header\n")
 		return false
 	}
 
 	// Rewire loop latch to header and exit based on new coming conditional test
 	if !rewireLoopLatch(loopLatch, cond, loopHeader, loopExit) {
-		fn.Fatalf("Loop Rotation: Failed to rewire loop latch\n")
+		fmt.Printf("Loop Rotation: Failed to rewire loop latch\n")
 		return false
 	}
 
@@ -261,7 +264,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Rewire loop guard to original loop header and loop exit
 	if !rewireLoopGuard(loopGuard, loopGuardCond, entry, loopHeader, loopExit) {
-		fn.Fatalf("Loop Rotation: Failed to rewire loop guard\n")
+		fmt.Printf("Loop Rotation: Failed to rewire loop guard\n")
 		return false
 	}
 
