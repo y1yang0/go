@@ -98,7 +98,6 @@ type loopForm struct {
 	loopExit   *Block
 	loopLatch  *Block // where increment happens
 	loopGuard  *Block
-	guardCond  *Value
 }
 
 func checkLoopForm(loop *loop) string {
@@ -197,7 +196,18 @@ func (lf *loopForm) rewireLoopGuard(guardCond *Value) bool {
 	return false
 }
 
-func createLoopGuardCond(loopGuard *Block, cond *Value) *Value {
+func (lf *loopForm) createLoopGuard(cond *Value) *Value {
+	// Create loop guard block, rewire entry to it
+	loopGuard := lf.ln.f.NewBlock(BlockIf)
+	lf.loopGuard = loopGuard
+
+	entry := lf.ln.sdom.Parent(lf.loopHeader)
+	entry.Succs = entry.Succs[:0] // corresponding predecessor edge of loop header should be rewired later
+	entry.AddEdgeTo(loopGuard)
+
+	// Create conditional test to loop guard based on existing conditional test
+	// TODO: If loop guard is already exists, dont insert duplicate one
+	// TODO: If this is inner loop, dont insert loop guard
 	guardCond := loopGuard.NewValue0IA(cond.Pos, cond.Op, cond.Type, cond.AuxInt, cond.Aux)
 	newArgs := make([]*Value, 0, len(cond.Args))
 	for _, arg := range cond.Args {
@@ -212,28 +222,16 @@ func createLoopGuardCond(loopGuard *Block, cond *Value) *Value {
 	return guardCond
 }
 
-// Create conditional test to loop guard based on existing conditional test
-// TODO: If loop guard is already exists, dont insert duplicate one
-// TODO: If this is inner loop, dont insert loop guard
-func (lf *loopForm) createLoopGuard(cond *Value) *Value {
-	loopGuard := lf.ln.f.NewBlock(BlockIf)
-	lf.loopGuard = loopGuard
-
-	entry := lf.ln.sdom.Parent(lf.loopHeader)
-	entry.Succs = entry.Succs[:0] // corresponding predecessor edge of loop header should be rewired later
-	entry.AddEdgeTo(loopGuard)
-
-	return createLoopGuardCond(loopGuard, cond)
-}
-
 // Loop exit now merges loop header and loop guard, so Phi is required if loop
 // exit Values depends on Values that defined in loop header
-func (loopnest *loopnest) mergeLoopExit(loopExit, loopHeader, loopGuard *Block) {
+func (lf *loopForm) mergeLoopExit() {
+	loopExit := lf.loopExit
+	loopGuard := lf.loopGuard
 	for _, val := range loopExit.Values {
 		for _, use := range val.Args {
 			// If use is not dominated by loopGuard, create new Phi and merge
 			// incoming values
-			if !loopnest.sdom.IsAncestorEq(loopGuard, use.Block) {
+			if !lf.ln.sdom.IsAncestorEq(loopGuard, use.Block) {
 				if use.Op == OpPhi {
 					// Allocate floating new phi
 					phi := loopExit.Func.newValueNoBlock(OpPhi, use.Type, use.Pos)
@@ -260,7 +258,6 @@ func (loopnest *loopnest) mergeLoopExit(loopExit, loopHeader, loopGuard *Block) 
 }
 
 func (loopnest *loopnest) rotateLoop(loop *loop) bool {
-
 	loopnest.assembleChildren() // initialize loop children
 	loopnest.findExits()        // initialize loop exits
 	fn := loopnest.f
@@ -271,20 +268,13 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		return false
 	}
 
+	loopHeader := loop.header
 	lf := &loopForm{
-		loopHeader: loop.header,
+		loopHeader: loopHeader,
 		loopBody:   loop.header.Succs[0].b,
 		loopExit:   loopHeader.Succs[1].b,
 		loopLatch:  loopHeader.Preds[1].b,
 	}
-	loopHeader := loop.header
-	loopBody := loop.header.Succs[0].b
-	loopExit := loopHeader.Succs[1].b
-	loopLatch := loopHeader.Preds[1].b // where increment happens
-
-	fmt.Printf("==START cond:%v, exit:%v latch%v, body:%v -- %v\n",
-		loopHeader.String(), loopExit.String(), loopLatch.String(),
-		loopBody.String(), loopnest.f.Name)
 
 	// Move conditional test from loop header to loop latch
 	cond := lf.moveCond()
@@ -311,7 +301,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	}
 
 	// Merge any uses in loop exit that not dominated by loop guard
-	loopnest.mergeLoopExit(loopExit, loopHeader, loopGuard)
+	lf.mergeLoopExit()
 
 	// TODO: Verify rotated loop form
 
