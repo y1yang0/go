@@ -204,6 +204,10 @@ func licm(f *Func) {
 		if len(loopBlocks) >= MaxLoopBlockSize {
 			continue
 		}
+		// TODO: loop contains loop cases.
+		if loop.outer != nil {
+			continue
+		}
 
 		// // try to hoist loop invariant outside the loop
 		// loopnest.assembleChildren() // initialize loop children
@@ -213,6 +217,9 @@ func licm(f *Func) {
 		// if invariants != nil {
 		// 	state.tryHoist(invariants)
 		// }
-		loopnest.rotateLoop(loop)
+		ok := loopnest.rotateLoop(loop)
+		if ok {
+			fmt.Printf("success: %s \n", f.Name)
+		}
 	}
 }

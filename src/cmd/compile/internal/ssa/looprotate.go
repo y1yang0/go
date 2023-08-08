@@ -93,6 +93,7 @@ import "fmt"
 
 type loopForm struct {
 	ln         *loopnest
+	loop       *loop
 	loopHeader *Block
 	loopBody   *Block
 	loopExit   *Block
@@ -105,7 +106,7 @@ func (lf *loopForm) LongString() string {
 		lf.loopHeader, lf.loopBody, lf.loopExit, lf.loopLatch, lf.loopGuard)
 }
 
-func checkLoopForm(loop *loop) string {
+func (ln *loopnest) checkLoopForm(loop *loop) string {
 	loopHeader := loop.header
 	// loopHeader <- entry(0), loopLatch(1)?
 	if len(loopHeader.Preds) != 2 {
@@ -120,6 +121,11 @@ func checkLoopForm(loop *loop) string {
 		// TODO: Maybe this is too strict
 		return "loop exit requries 1 predecessor"
 	}
+
+	if len(loop.exits) != 1 {
+		return "loop exit more than one."
+	}
+
 	illForm := true
 	for _, exit := range loop.exits {
 		if exit == loopExit {
@@ -131,6 +137,15 @@ func checkLoopForm(loop *loop) string {
 		return "loop exit is invalid"
 	}
 
+	cond := loopHeader.Controls[0]
+	entry := ln.sdom.Parent(loopHeader)
+	for _, arg := range cond.Args {
+		// skip cases we couldn't create phi node. like use method calls' result as loop condition.
+		if ln.sdom.IsAncestorEq(arg.Block, entry) || arg.Op == OpPhi {
+			continue
+		}
+		return fmt.Sprintf("loop use method calls as cond. %s in block: %s", arg.LongString(), arg.Block.String())
+	}
 	return ""
 }
 
@@ -209,10 +224,11 @@ func (lf *loopForm) createLoopGuard(cond *Value) *Value {
 	// Create loop guard block,
 	loopGuard := lf.ln.f.NewBlock(BlockIf)
 	lf.loopGuard = loopGuard
-
+	// update b2l after adding a new guard block.
+	lf.ln.updateb2l(loopGuard, lf.loop)
 	// Rewire entry to loop guard instead of original loop header
 	// entry -> loopGuard
-	entry := lf.ln.sdom.Parent(lf.loopHeader)
+	entry := lf.ln.f.Sdom().Parent(lf.loopHeader)
 	entry.Succs = entry.Succs[:0]
 	entry.AddEdgeTo(loopGuard)
 
@@ -222,12 +238,11 @@ func (lf *loopForm) createLoopGuard(cond *Value) *Value {
 	guardCond := loopGuard.NewValue0IA(cond.Pos, cond.Op, cond.Type, cond.AuxInt, cond.Aux)
 	newArgs := make([]*Value, 0, len(cond.Args))
 	for _, arg := range cond.Args {
-		if arg.Op == OpPhi {
-			// loopHeader <- entry(0), loopLatch(1)
-			newArgs = append(newArgs, arg.Args[0])
-		} else {
-			newArgs = append(newArgs, arg)
+		newArg, ok := lf.ln.findDefNonInLoop(arg, entry)
+		if !ok {
+			panic("error in search arg.")
 		}
+		newArgs = append(newArgs, newArg)
 	}
 	guardCond.AddArgs(newArgs...)
 	return guardCond
@@ -238,9 +253,14 @@ func (lf *loopForm) createLoopGuard(cond *Value) *Value {
 func (lf *loopForm) mergeLoopExit() {
 	loopExit := lf.loopExit
 	loopGuard := lf.loopGuard
-	sdom := lf.ln.sdom
+	loopHeader := lf.loopHeader
+	sdom := lf.ln.f.Sdom()
+
 	for _, val := range loopExit.Values {
 		for _, use := range val.Args {
+			if use.Block == loopExit {
+				continue
+			}
 			// If use is not dominated by loopGuard, merge is requred in such
 			// case, create new Phi and merge use with its argument
 			if !sdom.IsAncestorEq(use.Block, loopGuard) {
@@ -270,17 +290,58 @@ func (lf *loopForm) mergeLoopExit() {
 			}
 		}
 	}
+
+	// build udf chains for blocks which outside the loop and use var defined in the old loop header.
+	deps := make(map[*Value][]*Block)
+	reverse := make([]*Value, 0)
+	for _, block := range lf.ln.f.Blocks {
+		if block == loopHeader || lf.ln.b2l[block.ID] == lf.loop {
+			continue
+		}
+		for _, val := range block.Values {
+			for _, use := range val.Args {
+				if use.Block == loopHeader {
+					if use.Op == OpPhi {
+						deps[use] = append(deps[use], block)
+						reverse = append(reverse, use)
+					} else {
+						panic("no implement.")
+					}
+				}
+			}
+		}
+	}
+
+	// update phi nodes in loop's exit block in postorder.
+	for i := len(reverse) - 1; i >= 0; i-- {
+		use := reverse[i]
+		blocks := deps[use]
+		if use.Op == OpPhi {
+			phi := loopExit.Func.newValueNoBlock(OpPhi, use.Type, use.Pos)
+			phiArgs := make([]*Value, 0)
+			phiArgs = append(phiArgs, use)
+			for k := 0; k < len(use.Block.Preds); k++ {
+				// argument block of use must dominate loopGuard
+				if sdom.IsAncestorEq(use.Block.Preds[k].b, loopGuard) {
+					phiArgs = append(phiArgs, use.Args[k])
+					break
+				}
+			}
+			phi.AddArgs(phiArgs...)
+			loopExit.placeValue(phi)
+			for _, block := range blocks {
+				block.replaceUses(use, phi)
+			}
+		}
+	}
 }
 
 func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	loopnest.assembleChildren() // initialize loop children
 	loopnest.findExits()        // initialize loop exits
-	if loopnest.f.Name != "IndexRabinKarpBytes" {
-		return false
-	}
 
 	// Before rotation, ensure given loop is in form of normal shape
-	if msg := checkLoopForm(loop); msg != "" {
+	if msg := loopnest.checkLoopForm(loop); msg != "" {
 		fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
 		return false
 	}
@@ -288,6 +349,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	loopHeader := loop.header
 	lf := &loopForm{
 		ln:         loopnest,
+		loop:       loop,
 		loopHeader: loopHeader,
 		loopBody:   loop.header.Succs[0].b,
 		loopExit:   loopHeader.Succs[1].b,
@@ -316,11 +378,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Loop is rotated
 	f := loopnest.f
-	if f.Name == "IndexRabinKarp" || f.Name == "IndexRabinKarpBytes" {
-		f.dumpFile("oops")
-	}
 	fmt.Printf("Loop Rotation: %v %v\n", lf.LongString(), f.Name)
-
 	f.invalidateCFG()
 	return true
 }

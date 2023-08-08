@@ -32,6 +32,7 @@ type loopnest struct {
 	sdom           SparseTree
 	loops          []*loop
 	hasIrreducible bool // TODO current treatment of irreducible loops is very flaky, if accurate loops are needed, must punt at function level.
+	guards         []*Block
 
 	// Record which of the lazily initialized fields have actually been initialized.
 	initializedChildren, initializedDepth, initializedExits bool
@@ -499,9 +500,6 @@ func (ln *loopnest) createLoopGuard(l *loop) *Block {
 }
 
 func (ln *loopnest) findDefNonInLoop(v *Value, entry *Block) (*Value, bool) {
-	if v.Op == OpLoad {
-		return nil, false
-	}
 	if ln.sdom.IsAncestorEq(v.Block, entry) {
 		return v, true
 	}
@@ -524,6 +522,15 @@ func (b *Block) unlinkSucc(other *Block) {
 			e.b.removePred(i)
 		}
 	}
+}
+
+func (ln *loopnest) updateb2l(b *Block, l *loop) {
+	b2l := make([]*loop, ln.f.NumBlocks())
+	for index, l := range ln.b2l {
+		b2l[index] = l
+	}
+	b2l[b.ID] = l
+	ln.b2l = b2l
 }
 
 // findLoopBlocks returns all basic blocks, including those contained in nested loops.
