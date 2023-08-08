@@ -224,8 +224,9 @@ func (lf *loopForm) createLoopGuard(cond *Value) *Value {
 	// Create loop guard block,
 	loopGuard := lf.ln.f.NewBlock(BlockIf)
 	lf.loopGuard = loopGuard
+	lf.ln.guards = append(lf.ln.guards, loopGuard)
 	// update b2l after adding a new guard block.
-	lf.ln.updateb2l(loopGuard, lf.loop)
+	// lf.ln.updateb2l(loopGuard, lf.loop)
 	// Rewire entry to loop guard instead of original loop header
 	// entry -> loopGuard
 	entry := lf.ln.f.Sdom().Parent(lf.loopHeader)
@@ -294,7 +295,14 @@ func (lf *loopForm) mergeLoopExit() {
 	// build udf chains for blocks which outside the loop and use var defined in the old loop header.
 	deps := make(map[*Value][]*Block)
 	reverse := make([]*Value, 0)
+	guards := make(map[*Block]struct{})
+	for _, guard := range lf.ln.guards {
+		guards[guard] = struct{}{}
+	}
 	for _, block := range lf.ln.f.Blocks {
+		if _, ok := guards[block]; ok {
+			continue
+		}
 		if block == loopHeader || lf.ln.b2l[block.ID] == lf.loop {
 			continue
 		}
