@@ -334,13 +334,15 @@ func (lf *loopForm) mergeLoopExit() {
 
 		for _, val := range block.Values {
 			for _, arg := range val.Args {
-				if lf.ln.b2l[arg.Block.ID] == lf.loop {
+				// TODO: refactor this, it's nasty
+				// we create new block loop guard, lf.ln.b2l may be nil
+				if len(lf.ln.b2l) > int(arg.Block.ID) && lf.ln.b2l[arg.Block.ID] == lf.loop {
 					addDep(arg, val.Block)
 				}
 			}
 		}
 		for _, ctrl := range block.ControlValues() {
-			if lf.ln.b2l[ctrl.Block.ID] == lf.loop {
+			if len(lf.ln.b2l) > int(ctrl.Block.ID) && lf.ln.b2l[ctrl.Block.ID] == lf.loop {
 				addDep(ctrl, block)
 			}
 		}
@@ -398,9 +400,9 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
 		return false
 	}
-	if loopnest.f.Name != "writeRegexp" {
-		return false
-	}
+	// if loopnest.f.Name != "writeRegexp" {
+	// 	return false
+	// }
 
 	loopHeader := loop.header
 	lf := &loopForm{
@@ -426,11 +428,8 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Rewire loop guard to original loop header and loop exit
 	lf.rewireLoopGuard(guardCond)
-	loopnest.f.invalidateCFG()
 
 	// Re-build loop structure
-	lf.ln = loopnest.f.loopnest()
-
 	lf.updateCond(cond)
 	// Merge any uses in loop exit that not dominated by loop guard
 	lf.mergeLoopExit()
