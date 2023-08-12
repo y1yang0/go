@@ -302,7 +302,7 @@ func (lf *loopForm) mergeLoopExit() {
 		}
 		// Is this block belongs to loop?
 		foundInLoop := false
-
+		// TODO: this is extremely inefficient
 		for _, b := range loopBlocks {
 			if b == block {
 				foundInLoop = true
@@ -313,24 +313,32 @@ func (lf *loopForm) mergeLoopExit() {
 			continue
 		}
 
-		// loopGuard strictly dominates this block, find any uses that defined in
-		// loop but used in loop exit or block dominated by loop exit
+		// Some value in Block b depends on Value v in current loop
+		addDep := func(v *Value, b *Block) {
+			// must be loop header
+			if v.Block != loopHeader {
+				fmt.Printf("use block must be loopHeader%v %v %v\n", loopHeader, v, b)
+				panic("ff")
+			}
+			if v.Op != OpPhi {
+				// TODO: maybe we need to clone chain values from loop header to loop exit :(
+				// OR simply bail out compilation
+				panic("Not implemented yet")
+			}
+			// Many blocks may rely on identical dep
+			deps[v] = append(deps[v], b)
+		}
+
 		for _, val := range block.Values {
 			for _, arg := range val.Args {
 				if lf.ln.b2l[arg.Block.ID] == lf.loop {
-					// must be loop header
-					if arg.Block != loopHeader {
-						fmt.Printf("use block must be loopHeader%v %v %v\n", loopHeader, arg, val)
-						panic("ff")
-					}
-					if arg.Op != OpPhi {
-						// TODO: maybe we need to clone chain values from loop header to loop exit :(
-						// OR simply bail out compilation
-						panic("Not implemented yet")
-					}
-					// Many blocks may rely on identical dep
-					deps[arg] = append(deps[arg], val.Block)
+					addDep(arg, val.Block)
 				}
+			}
+		}
+		for _, ctrl := range block.ControlValues() {
+			if lf.ln.b2l[ctrl.Block.ID] == lf.loop {
+				addDep(ctrl, block)
 			}
 		}
 	}
@@ -387,9 +395,9 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
 		return false
 	}
-	// if loopnest.f.Name != "InitTables" {
-	// 	return false
-	// }
+	if loopnest.f.Name != "InitTables.func3" {
+		return false
+	}
 
 	loopHeader := loop.header
 	lf := &loopForm{
