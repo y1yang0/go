@@ -293,16 +293,18 @@ func (lf *loopForm) mergeLoopExit() {
 	loopHeader := lf.loopHeader
 	sdom := lf.ln.f.Sdom()
 
+	loopBlocks := lf.ln.findLoopBlocks(lf.loop)
 	deps := make(map[*Value][]*Block)
 	for _, block := range lf.ln.f.Blocks {
 		// Is not dominated by loopGuard?
-		if !sdom.IsAncestorEq(loopGuard, block) {
+		if sdom.IsAncestorEq(block, loopGuard) {
 			continue
 		}
 		// Is this block belongs to loop?
 		foundInLoop := false
-		for x := lf.ln.b2l[block.ID]; x != nil; x = x.outer {
-			if x == lf.loop {
+
+		for _, b := range loopBlocks {
+			if b == block {
 				foundInLoop = true
 				break
 			}
@@ -363,10 +365,9 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
 		return false
 	}
-	if loopnest.f.Name != "(*consistentHeapStats).read" {
+	if loopnest.f.Name != "timediv" {
 		return false
 	}
-	loopnest.f.dumpFile("oops")
 
 	loopHeader := loop.header
 	lf := &loopForm{
