@@ -342,7 +342,18 @@ func (lf *loopForm) mergeLoopExit() {
 	// may be used at the end of each iteration before they are updated.
 	// Therefore, we need to replace all subsequent uses of Phi with the use of
 	// Phi parameter. This way, it is equivalent to using the updated values of
-	// Phi values
+	// Phi values. Here is an simple example:
+	// 	loop header:
+	// 		v1 = phi(v2, v3)
+	//      Plain -> loop latch
+	//
+	// 	loop latch:
+	// 		v3 = Load v4
+	// 		v5 = IsNonNull v1
+	// 		If v5 -> loop exit, loop header
+	//
+	// After loop rotatation, the use of un-updated v1 in v5 remains. We need to
+	// replace it with the use of v3.
 	for dep, blocks := range deps {
 		phi := loopExit.Func.newValueNoBlock(OpPhi, dep.Type, dep.Pos)
 		if len(dep.Block.Preds) != 2 {
@@ -376,7 +387,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
 		return false
 	}
-	// if loopnest.f.Name != "timediv" {
+	// if loopnest.f.Name != "InitTables" {
 	// 	return false
 	// }
 
