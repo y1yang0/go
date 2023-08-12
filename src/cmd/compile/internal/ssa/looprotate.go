@@ -336,18 +336,29 @@ func (lf *loopForm) mergeLoopExit() {
 	}
 
 	// Create Phi to merge incoming Value and replace dep with new guy.
+	// In original while/for loop, a critical edge is inserted at the end of each
+	// iteration, and Phi values are updated. All subsequent uses of Phi rely on
+	// the updated values. However, when converted to a do-while loop, Phi nodes
+	// may be used at the end of each iteration before they are updated.
+	// Therefore, we need to replace all subsequent uses of Phi with the use of
+	// Phi parameter. This way, it is equivalent to using the updated values of
+	// Phi values
 	for dep, blocks := range deps {
 		phi := loopExit.Func.newValueNoBlock(OpPhi, dep.Type, dep.Pos)
-		phiArgs := make([]*Value, 0)
-		phiArgs = append(phiArgs, dep)
+		if len(dep.Block.Preds) != 2 {
+			panic("loop header must be 2 pred ")
+		}
+		var phiArgs [2]*Value
+		// loopExit <- loopLatch(0), loopGuard(1)
 		for k := 0; k < len(dep.Block.Preds); k++ {
 			// argument block of use must dominate loopGuard
 			if sdom.IsAncestorEq(dep.Block.Preds[k].b, loopGuard) {
-				phiArgs = append(phiArgs, dep.Args[k])
-				break
+				phiArgs[1] = dep.Args[k]
+			} else {
+				phiArgs[0] = dep.Args[k]
 			}
 		}
-		phi.AddArgs(phiArgs...)
+		phi.AddArgs(phiArgs[:]...)
 		fmt.Printf("== dep %v is replaced by %v in block%v\n", dep.LongString(), phi.LongString(), blocks)
 		for _, block := range blocks {
 			block.replaceUses(dep, phi)
@@ -365,9 +376,9 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
 		return false
 	}
-	if loopnest.f.Name != "timediv" {
-		return false
-	}
+	// if loopnest.f.Name != "timediv" {
+	// 	return false
+	// }
 
 	loopHeader := loop.header
 	lf := &loopForm{
@@ -394,9 +405,9 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	// Rewire loop guard to original loop header and loop exit
 	lf.rewireLoopGuard(guardCond)
 
+	lf.updateCond(cond)
 	// Merge any uses in loop exit that not dominated by loop guard
 	lf.mergeLoopExit()
-	lf.updateCond(cond)
 
 	// TODO: Verify rotated loop form
 
