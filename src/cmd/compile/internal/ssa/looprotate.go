@@ -398,9 +398,9 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
 		return false
 	}
-	// if loopnest.f.Name != "InitTables.func3" {
-	// return false
-	// }
+	if loopnest.f.Name != "writeRegexp" {
+		return false
+	}
 
 	loopHeader := loop.header
 	lf := &loopForm{
@@ -426,6 +426,10 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 
 	// Rewire loop guard to original loop header and loop exit
 	lf.rewireLoopGuard(guardCond)
+	loopnest.f.invalidateCFG()
+
+	// Re-build loop structure
+	lf.ln = loopnest.f.loopnest()
 
 	lf.updateCond(cond)
 	// Merge any uses in loop exit that not dominated by loop guard
