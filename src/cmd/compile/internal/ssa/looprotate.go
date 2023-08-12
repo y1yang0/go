@@ -285,8 +285,11 @@ func (lf *loopForm) createLoopGuard(cond *Value) *Value {
 	return guardCond
 }
 
-// Loop exit now merges loop header and loop guard, so Phi is required if loop
-// exit Values depends on Values that defined in loop header
+// If the basic block following the loop has value dependencies on the values
+// defined within the current loop, it is necessary to create a Phi at the loop
+// exit and use it to replace the values defined within the loop. This is because
+// after inserting the loop guard, the loop may not always dominate the loop exit,
+// loop exit merges control flows from loop guard and loop latch.
 func (lf *loopForm) mergeLoopExit() {
 	loopExit := lf.loopExit
 	loopGuard := lf.loopGuard
@@ -395,9 +398,9 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
 		return false
 	}
-	if loopnest.f.Name != "InitTables.func3" {
-		return false
-	}
+	// if loopnest.f.Name != "InitTables.func3" {
+	// return false
+	// }
 
 	loopHeader := loop.header
 	lf := &loopForm{
