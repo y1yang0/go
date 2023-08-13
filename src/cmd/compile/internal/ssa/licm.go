@@ -221,5 +221,6 @@ func licm(f *Func) {
 		if ok {
 			fmt.Printf("success: %s \n", f.Name)
 		}
+		break
 	}
 }

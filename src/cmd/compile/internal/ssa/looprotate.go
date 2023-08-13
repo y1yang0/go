@@ -4,7 +4,9 @@
 
 package ssa
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // ----------------------------------------------------------------------------
 // Loop Rotation
@@ -400,9 +402,17 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 		fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
 		return false
 	}
-	// if loopnest.f.Name != "writeRegexp" {
-	// 	return false
-	// }
+
+	//if strings.Contains(loopnest.f.Name, "arch") {
+	//	return false
+	//}
+	ok := false
+	if loopnest.f.Name == "(*pallocBits).summarize" {
+		ok = true
+	}
+	if !ok {
+		return false
+	}
 
 	loopHeader := loop.header
 	lf := &loopForm{
