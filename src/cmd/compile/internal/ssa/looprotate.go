@@ -143,6 +143,9 @@ func (ln *loopnest) checkLoopForm(loop *loop) string {
 
 	cond := loopHeader.Controls[0]
 	entry := ln.sdom.Parent(loopHeader)
+	if cond.Op == OpPhi {
+		return "skip if block with phi node."
+	}
 	for _, arg := range cond.Args {
 		// skip cases we couldn't create phi node. like use method calls' result as loop condition.
 		if ln.sdom.IsAncestorEq(arg.Block, entry) || arg.Op == OpPhi {
