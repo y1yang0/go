@@ -90,8 +90,11 @@ import (
 //	  loop exit
 //
 // The detailed algorithm is summarized as following steps
-// TODO: WRITE DETAILED ALGORITHM STEPS
-// TODO: ADD MINIMAL SSA OR CODE DIFF(before and after loop rotation)
+// TODO: 详细描述算法步骤
+// TODO: 插入必要的assert
+// TODO: 插入必要的debug print
+// TODO: 新增IR测试用例looprotate_test.go
+// TODO: 在每个pass之后都执行loop rotate，让他更robustness
 
 func (loop *loop) FullString() string {
 	// Loop: loop header, B: loop body, E: loop exit, L: loop latch, G: loop guard
@@ -113,12 +116,12 @@ func (ln *loopnest) checkLoopForm(loop *loop) string {
 	}
 	loopExit := loop.header.Succs[1].b
 	if len(loopExit.Preds) != 1 {
-		// TODO: Maybe this is too strict
+		// TODO: 太过严格，考虑放松？
 		return "loop exit requries 1 predecessor"
 	}
 
 	if len(loop.exits) != 1 {
-		// FIXME: This is definitively too strict
+		// FIXME: 太过严格，考虑放松？
 		return "loop exit more than one."
 	}
 
@@ -130,13 +133,14 @@ func (ln *loopnest) checkLoopForm(loop *loop) string {
 		}
 	}
 	if illForm {
-		// TODO: Maybe this is too strict
+		// TODO: 太过严格，考虑放松？
 		return "loop exit is invalid"
 	}
 
 	cond := loopHeader.Controls[0]
 	entry := ln.sdom.Parent(loopHeader)
 	for _, arg := range cond.Args {
+		// TODO: 太过严格，考虑放松？
 		// skip cases we couldn't create phi node. like use method calls' result as loop condition.
 		if ln.sdom.IsAncestorEq(arg.Block, entry) || arg.Op == OpPhi {
 			continue
@@ -284,8 +288,7 @@ func (loop *loop) rewireLoopEntry(sdom SparseTree, loopGuard *Block) {
 //	loopGuard -> loopHeader(0), loopExit(1)
 func (loop *loop) createLoopGuard(ln *loopnest, cond *Value) {
 	// Create loop guard block
-	// TODO: insert loop guard before loop header in block order
-	// TODO: once we created loop guard, we need to update b2l mapping, because
+	// TODO: 现在新插入的loop guard位于最后一个block，放到loop header之前更好
 	// we may use it later(in mergeLoopUse)
 	loopGuard := ln.f.NewBlock(BlockIf)
 	loop.guard = loopGuard
@@ -295,9 +298,13 @@ func (loop *loop) createLoopGuard(ln *loopnest, cond *Value) {
 	loop.rewireLoopEntry(sdom, loopGuard)
 
 	// Create conditional test for loop guard based on existing conditional test
-	// TODO: If loop guard is already exists, dont insert duplicate one
-	// TODO: If this is inner loop, dont insert loop guard
-	// TODO: Update new cond aux info such as variable name
+	// TODO: 如果已经存在类似loop guard的结构，就无须插入，比如用户已经这么写了：
+	//  if len(b) >0 {
+	//		for i:=0; i<len(b); i++ {...}
+	//  }
+	//  这种情况下，我们就不应该插入loop guard
+	// TODO: 如果当前循环是inner loop,就不要插入guard，因为可以保证循环至少执行一次
+	// TODO: 更新一下新cond的aux信息，比如变量名字，方便debug
 	var guardCond *Value
 	if cond.Op != OpPhi {
 		// Normal case, e.g. If (Less64 v1 v2) -> loop header, loop exit
@@ -346,7 +353,7 @@ func (loop *loop) collectLoopUse(ln *loopnest) (map[*Value][]*Block, bool) {
 		}
 	}
 
-	// TODO: beautify below code
+	// TODO: 代码美化
 	for _, block := range ln.f.Blocks {
 		for _, val := range block.Values {
 			for idx, arg := range val.Args {
@@ -375,7 +382,6 @@ func (loop *loop) collectLoopUse(ln *loopnest) (map[*Value][]*Block, bool) {
 			}
 		}
 	}
-	//fmt.Printf("==use %v\n", defUses)
 	return defUses, false
 }
 
@@ -457,9 +463,8 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	// Merge any uses that not dominated by loop guard to loop exit
 	loop.mergeLoopUse(loopnest, deps)
 
-	// TODO: Verify rotated loop form
-
 	// Gosh, loop is rotated
+	// TODO: 新增verifyLoopRotated，验证rotated后的loop形式符合预期
 	f := loopnest.f
 	fmt.Printf("Loop Rotation: %v %v\n", loop.FullString(), f.Name)
 	f.invalidateCFG()
