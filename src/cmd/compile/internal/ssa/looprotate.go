@@ -26,7 +26,7 @@ import (
 //	     ▼
 //	 loop exit
 //
-// In the terminology, loop entry governs the entire loop, loop header contains
+// In the terminology, loop entry dominates the entire loop, loop header contains
 // the loop conditional test, loop body refers to the code that is repeated, loop
 // latch contains the backedge to loop header, for simple loops, the loop body is
 // equal to loop latch, and loop exit refers to the single block that dominates
@@ -286,13 +286,13 @@ func (loop *loop) rewireLoopEntry(sdom SparseTree, loopGuard *Block) {
 //
 //	loopEntry -> loopGuard
 //	loopGuard -> loopHeader(0), loopExit(1)
-func (loop *loop) createLoopGuard(ln *loopnest, cond *Value) {
+func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	// Create loop guard block
 	// TODO: 现在新插入的loop guard位于最后一个block，放到loop header之前更好
 	// we may use it later(in mergeLoopUse)
-	loopGuard := ln.f.NewBlock(BlockIf)
+	loopGuard := fn.NewBlock(BlockIf)
 	loop.guard = loopGuard
-	sdom := ln.f.Sdom()
+	sdom := fn.Sdom()
 
 	// Rewire entry to loop guard instead of original loop header
 	loop.rewireLoopEntry(sdom, loopGuard)
@@ -338,13 +338,15 @@ func (loop *loop) createLoopGuard(ln *loopnest, cond *Value) {
 	}
 
 	// Rewire loop guard to original loop header and loop exit
-	loop.rewireLoopGuard(ln.f.Sdom(), guardCond)
+	loop.rewireLoopGuard(fn.Sdom(), guardCond)
 }
 
-func (loop *loop) collectLoopUse(ln *loopnest) (map[*Value][]*Block, bool) {
+func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
 	defUses := make(map[*Value][]*Block)
 	bad := make(map[*Value]bool)
-	sdom := ln.f.Sdom()
+	sdom := fn.Sdom()
+
+	// Record all values defined inside loop header, which are used outside loop
 	for _, val := range loop.header.Values {
 		if val.Op == OpPhi {
 			defUses[val] = make([]*Block, 0, val.Uses)
@@ -354,7 +356,7 @@ func (loop *loop) collectLoopUse(ln *loopnest) (map[*Value][]*Block, bool) {
 	}
 
 	// TODO: 代码美化
-	for _, block := range ln.f.Blocks {
+	for _, block := range fn.Blocks {
 		for _, val := range block.Values {
 			for idx, arg := range val.Args {
 				if _, exist := defUses[arg]; exist {
@@ -390,39 +392,38 @@ func (loop *loop) collectLoopUse(ln *loopnest) (map[*Value][]*Block, bool) {
 // exit and use it to replace the values defined within the loop. This is because
 // after inserting the loop guard, the loop may not always dominate the loop exit,
 // loop exit merges control flows from loop guard and loop latch.
-func (loop *loop) mergeLoopUse(ln *loopnest, deps map[*Value][]*Block) {
-	sdom := ln.f.Sdom()
-	// For above collected Value dependencies, create Phi to merge incoming Value
-	for dep, blocks := range deps {
-		if len(blocks) == 0 {
+func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]*Block) {
+	sdom := fn.Sdom()
+	for def, useBlock := range defUses {
+		if len(useBlock) == 0 {
 			continue
 		}
-		phi := loop.exit.Func.newValueNoBlock(OpPhi, dep.Type, dep.Pos)
-		if len(dep.Block.Preds) != 2 {
-			fmt.Printf("loop header must be 2 pred %v %v\n", dep, loop.FullString())
+		phi := loop.exit.Func.newValueNoBlock(OpPhi, def.Type, def.Pos)
+		if len(def.Block.Preds) != 2 {
+			fmt.Printf("loop header must be 2 pred %v %v\n", def, loop.FullString())
 			panic("loop header must be 2 pred ")
 		}
 		var phiArgs [2]*Value
 		// loopExit <- loopLatch(0), loopGuard(1)
-		for k := 0; k < len(dep.Block.Preds); k++ {
+		for k := 0; k < len(def.Block.Preds); k++ {
 			// argument block of use must dominate loopGuard
-			if sdom.IsAncestorEq(dep.Block.Preds[k].b, loop.guard) {
-				phiArgs[1] = dep.Args[k]
+			if sdom.IsAncestorEq(def.Block.Preds[k].b, loop.guard) {
+				phiArgs[1] = def.Args[k]
 			} else {
-				phiArgs[0] = dep.Args[k]
+				phiArgs[0] = def.Args[k]
 			}
 		}
 		phi.AddArgs(phiArgs[:]...)
 		// fmt.Printf("== dep %v is replaced by %v in block%v\n", dep.LongString(), phi.LongString(), blocks)
-		for _, block := range blocks {
-			block.replaceUses(dep, phi)
+		for _, block := range useBlock {
+			block.replaceUses(def, phi)
 		}
 		loop.exit.placeValue(phi) // move phi into block after replaceUses
 	}
 }
 
 func (loopnest *loopnest) rotateLoop(loop *loop) bool {
-	// if loopnest.f.Name != "whatthefuck" {
+	// if loopnest.f.Name != "blockGeneric" {
 	// 	return false
 	// }
 
@@ -433,13 +434,14 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	}
 
 	// Initilaize loop structure
+	fn := loopnest.f
 	loopHeader := loop.header
 	loop.exit = loopHeader.Succs[1].b
 	loop.latch = loopHeader.Preds[1].b
 	loop.body = loop.header.Succs[0].b
 
-	// Collect all Values that depend on the Values in the current loop
-	deps, bailout := loop.collectLoopUse(loopnest)
+	// Collect all use blocks that depend on Value defined inside loop
+	defUses, bailout := loop.collectLoopUse(fn)
 	if bailout {
 		//fmt.Printf("Unable to process loop use other than Phi\n")
 		return false
@@ -455,19 +457,18 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	loop.rewireLoopLatch(cond)
 
 	// Create new loop guard block and wire it to appropriate blocks
-	loop.createLoopGuard(loopnest, cond)
+	loop.createLoopGuard(fn, cond)
 
 	// Update cond to use updated Phi as arguments
 	loop.updateCond(cond)
 
 	// Merge any uses that not dominated by loop guard to loop exit
-	loop.mergeLoopUse(loopnest, deps)
+	loop.mergeLoopUse(fn, defUses)
 
 	// Gosh, loop is rotated
 	// TODO: 新增verifyLoopRotated，验证rotated后的loop形式符合预期
-	f := loopnest.f
-	fmt.Printf("Loop Rotation: %v %v\n", loop.FullString(), f.Name)
-	f.invalidateCFG()
+	fmt.Printf("Loop Rotation: %v %v\n", loop.FullString(), fn.Name)
+	fn.invalidateCFG()
 	return true
 }
 

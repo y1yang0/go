@@ -8,10 +8,10 @@ import "fmt"
 
 type loop struct {
 	header *Block // The header node of this (reducible) loop
-	guard  *Block // Loop guard block(LoopRotate pass)
-	exit   *Block // Loop exit block(LoopRotate pass)
-	latch  *Block // Loop latch block, where increment happens(LoopRotate pass)
-	body   *Block // Loop body block(LoopRotate pass)
+	guard  *Block // Additional check to ensure loop executed at least once
+	exit   *Block // The unique exit block of this loop, if any
+	latch  *Block // Source of backedge, where increment happens
+	body   *Block // The first loop body, near to the header
 
 	outer *loop // loop containing this loop
 
