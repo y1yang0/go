@@ -102,18 +102,20 @@ func (loop *loop) FullString() string {
 		loop.header, loop.body, loop.exit, loop.latch, loop.guard)
 }
 
-func (ln *loopnest) checkLoopForm(loop *loop) string {
-	ln.findExits() // initialize loop exits
+func (loop *loop) initLoopForm(fn *Func) string {
+	fn.loopnest().findExits() // initialize loop exits
 
 	loopHeader := loop.header
 	// loopHeader <- entry(0), loopLatch(1)?
-	if len(loopHeader.Preds) != 2 {
-		return "loop header requires 2 predecessors"
+	// loopHeader -> loopBody(0), loopExit(1)?
+	if len(loopHeader.Preds) != 2 || len(loopHeader.Succs) != 2 ||
+		loopHeader.Kind != BlockIf {
+		return "illegal loop header"
 	}
-	// loopHeader -> loopBody(0), loopExit(1) ?
-	if loopHeader.Kind != BlockIf {
-		return "loop header must be BlockIf"
-	}
+	loop.exit = loopHeader.Succs[1].b
+	loop.latch = loopHeader.Preds[1].b
+	loop.body = loopHeader.Succs[0].b
+
 	loopExit := loop.header.Succs[1].b
 	if len(loopExit.Preds) != 1 {
 		// TODO: 太过严格，考虑放松？
@@ -138,11 +140,11 @@ func (ln *loopnest) checkLoopForm(loop *loop) string {
 	}
 
 	cond := loopHeader.Controls[0]
-	entry := ln.sdom.Parent(loopHeader)
+	entry := fn.Sdom().Parent(loopHeader)
 	for _, arg := range cond.Args {
 		// TODO: 太过严格，考虑放松？
 		// skip cases we couldn't create phi node. like use method calls' result as loop condition.
-		if ln.sdom.IsAncestorEq(arg.Block, entry) || arg.Op == OpPhi {
+		if fn.Sdom().IsAncestorEq(arg.Block, entry) || arg.Op == OpPhi {
 			continue
 		}
 		return fmt.Sprintf("loop use method calls as cond. %s in block: %s", arg.LongString(), arg.Block.String())
@@ -424,23 +426,15 @@ func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]*Block) {
 	}
 }
 
-func (loopnest *loopnest) rotateLoop(loop *loop) bool {
+func (fn *Func) rotateLoop(loop *loop) bool {
 	// if loopnest.f.Name != "blockGeneric" {
 	// 	return false
 	// }
 
-	// Before rotation, ensure given loop is in form of natural shape
-	if msg := loopnest.checkLoopForm(loop); msg != "" {
-		//	fmt.Printf("Loop Rotation: Bad loop L%v: %s \n", loop.header, msg)
+	// Initilaize loop form and check if its a natural loop
+	if msg := loop.initLoopForm(fn); msg != "" {
 		return false
 	}
-
-	// Initilaize loop structure
-	fn := loopnest.f
-	loopHeader := loop.header
-	loop.exit = loopHeader.Succs[1].b
-	loop.latch = loopHeader.Preds[1].b
-	loop.body = loop.header.Succs[0].b
 
 	// Collect all use blocks that depend on Value defined inside loop
 	defUses, bailout := loop.collectLoopUse(fn)
