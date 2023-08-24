@@ -217,7 +217,7 @@ func licm(f *Func) {
 		// if invariants != nil {
 		// 	state.tryHoist(invariants)
 		// }
-		ok := loopnest.rotateLoop(loop)
+		ok := f.rotateLoop(loop)
 		if ok {
 			//fmt.Printf("success: %s \n", f.Name)
 		} else {
