@@ -303,7 +303,6 @@ func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	//		for i:=0; i<len(b); i++ {...}
 	//  }
 	//  这种情况下，我们就不应该插入loop guard
-	// TODO: 如果当前循环是inner loop,就不要插入guard，因为可以保证循环至少执行一次
 	// TODO: 更新一下新cond的aux信息，比如变量名字，方便debug
 	var guardCond *Value
 	if cond.Op != OpPhi {
@@ -341,12 +340,12 @@ func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	loop.rewireLoopGuard(fn.Sdom(), guardCond)
 }
 
+// Collect all values defined inside loop header, which are used outside loop
 func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
 	defUses := make(map[*Value][]*Block)
 	bad := make(map[*Value]bool)
 	sdom := fn.Sdom()
 
-	// Record all values defined inside loop header, which are used outside loop
 	for _, val := range loop.header.Values {
 		if val.Op == OpPhi {
 			defUses[val] = make([]*Block, 0, val.Uses)
@@ -394,11 +393,14 @@ func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
 // loop exit merges control flows from loop guard and loop latch.
 func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]*Block) {
 	sdom := fn.Sdom()
+
 	for def, useBlock := range defUses {
+		// No use? Good, nothing to do
 		if len(useBlock) == 0 {
 			continue
 		}
-		phi := loop.exit.Func.newValueNoBlock(OpPhi, def.Type, def.Pos)
+
+		phi := fn.newValueNoBlock(OpPhi, def.Type, def.Pos)
 		if len(def.Block.Preds) != 2 {
 			fmt.Printf("loop header must be 2 pred %v %v\n", def, loop.FullString())
 			panic("loop header must be 2 pred ")
@@ -462,7 +464,7 @@ func (loopnest *loopnest) rotateLoop(loop *loop) bool {
 	// Update cond to use updated Phi as arguments
 	loop.updateCond(cond)
 
-	// Merge any uses that not dominated by loop guard to loop exit
+	// Merge any uses outside loop as loop header may not dominate them anymore
 	loop.mergeLoopUse(fn, defUses)
 
 	// Gosh, loop is rotated
