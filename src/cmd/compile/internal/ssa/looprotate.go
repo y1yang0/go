@@ -31,8 +31,10 @@ import (
 // latch contains the backedge to loop header, for simple loops, the loop body is
 // equal to loop latch, and loop exit refers to the single block that dominates
 // the entire loop.
-// We rotate the conditional test from loop header to loop latch. And loop latch
-// determines whether loop continues or exits based on incoming this test.
+// We rotate the conditional test from loop header to loop latch, incoming argument
+// of conditional test should be updated as well otherwise we would lose one update.
+// At this point, loop latch determines whether loop continues or exits based on
+// rotated test.
 //
 //	  entry
 //	    │
@@ -60,34 +62,39 @@ import (
 // program semantics while original program executes them only if test is okay.
 // An additional loop guard is required to ensure this.
 //
-//	    entry
-//	      │
-//	      │
-//	      │
-//	      ▼
-//	  loop guard
-//	   │  │
-//	   │  │
-//	   │  │  ┌────┐
-//	┌──┘  │  │    │
-//	│     ▼  ▼    │
-//	│ loop header │
-//	│     │       │
-//	│     │       │
-//	│     │       │
-//	│     ▼       │
-//	│ loop body   │
-//	│     │       │
-//	│     │       │
-//	│     │       │
-//	│     ▼       │
-//	│ loop latch  │
-//	│     │  │    │
-//	│     │  │    │
-//	└──┐  │  └────┘
-//	   │  │
-//	   ▼  ▼
-//	  loop exit
+//        entry
+//          │
+//          │
+//          │
+//          ▼
+//   ┌───loop guard
+//   │      │
+//   │      │
+//   │      │
+//   │      │
+//   │      ▼
+//   │  loop header◄──┐
+//   │      │         │
+//   │      │         │
+//   │      │         │
+//   │      ▼         │
+//   │  loop body     │
+//   │      │         │
+//   │      │         │
+//   │      │         │
+//   │      ▼         │
+//   │  loop latch────┘
+//   │      │
+//   │      │
+//   │      │
+//   │	    │
+//   │      ▼
+//   └─► loop exit
+//
+// Loop header no longer dominates the entire loop, loop guard dominates it instead.
+// If Values defined in loop were used outside loop, all these uses should be
+// replaced by a new Phi node at loop exit, which merges control flow from loop
+// header and loop guard.
 //
 // The detailed algorithm is summarized as following steps
 // TODO: 详细描述算法步骤
@@ -150,6 +157,9 @@ func (loop *loop) initLoopForm(fn *Func) string {
 		return fmt.Sprintf("loop use method calls as cond. %s in block: %s", arg.LongString(), arg.Block.String())
 	}
 	return ""
+}
+
+func (loop *loop) verifyRotatedLoop() {
 }
 
 // moveCond moves conditional test from loop header to loop latch
@@ -308,18 +318,15 @@ func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	// TODO: 更新一下新cond的aux信息，比如变量名字，方便debug
 	var guardCond *Value
 	if cond.Op != OpPhi {
-		// Normal case, e.g. If (Less64 v1 v2) -> loop header, loop exit
+		// Normal case, copy phi
+		//	  If (Less v1 Phi(v2 v3)) -> loop body, loop exit
+		// => If (Less v1 v2)         -> loop header, loop exit
 		guardCond = loopGuard.NewValue0IA(cond.Pos, cond.Op, cond.Type, cond.AuxInt, cond.Aux)
 		newArgs := make([]*Value, 0, len(cond.Args))
 		for _, arg := range cond.Args {
 			newArg := arg
-			// All uses of conditional test should be dominated by test itself, which
-			// implies that they should either be located at loopHeader or in a block
-			// that is dominated by loopHeader. For the latter case, no further action
-			// is needed as it can directly be used as the argument for guardCond
-			// For the former case, we need to handle it specially based on the type
-			// of the value. For example, we lookup incoming value of Phi as argument
-			// of guardCond
+			// Dont use Phi, use its incoming value instead, otherwise we will
+			// lose one update
 			if arg.Block == loop.header && arg.Op == OpPhi {
 				newArg = arg.Args[0]
 			}
@@ -330,7 +337,15 @@ func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 		}
 		guardCond.AddArgs(newArgs...)
 	} else {
-		// Rare case, If (Phi v1 v2) -> loop header, loop exit
+		// We cannot directly copy it as loop guard cond as we usually do because
+		// it is obviously a Phi, and its uses may not dominate the loop guard.
+		// For this case, a key observation is whether the loop only executes once,
+		// which depends on the first parameter defined in loop entry of the Phi.
+		// Therefore, we can directly use this parameter as loop guard cond.
+		//
+		// Rare case
+		//	   If (Phi v1 v2) -> loop body, loop exit
+		// =>  If v1          -> loop header, loop exit
 		entryArg := cond.Args[0]
 		guardCond = entryArg
 		if !sdom.IsAncestorEq(entryArg.Block, loop.header) {
@@ -427,7 +442,7 @@ func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]*Block) {
 }
 
 func (fn *Func) rotateLoop(loop *loop) bool {
-	// if loopnest.f.Name != "blockGeneric" {
+	// if fn.Name != "Main.func1" {
 	// 	return false
 	// }
 
@@ -463,7 +478,7 @@ func (fn *Func) rotateLoop(loop *loop) bool {
 
 	// Gosh, loop is rotated
 	// TODO: 新增verifyLoopRotated，验证rotated后的loop形式符合预期
-	fmt.Printf("Loop Rotation: %v %v\n", loop.FullString(), fn.Name)
+	// fmt.Printf("Loop Rotation: %v %v\n", loop.FullString(), fn.Name)
 	fn.invalidateCFG()
 	return true
 }
