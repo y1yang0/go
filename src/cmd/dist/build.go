@@ -257,7 +257,7 @@ func xinit() {
 	if err := os.WriteFile(pathf("%s/go.mod", workdir), []byte("module bootstrap"), 0666); err != nil {
 		fatalf("cannot write stub go.mod: %s", err)
 	}
-	xatexit(rmworkdir)
+	//xatexit(rmworkdir)
 
 	tooldir = pathf("%s/pkg/tool/%s_%s", goroot, gohostos, gohostarch)
 
@@ -1348,7 +1348,7 @@ func cmdbootstrap() {
 	flag.BoolVar(&force, "force", force, "build even if the port is marked as broken")
 	flag.BoolVar(&noBanner, "no-banner", noBanner, "do not print banner")
 	flag.BoolVar(&noClean, "no-clean", noClean, "print deprecation warning")
-
+	debug = true
 	xflagparse(0)
 
 	if noClean {
@@ -1501,6 +1501,7 @@ func cmdbootstrap() {
 	xprintf("Building Go toolchain3 using go_bootstrap and Go toolchain2.\n")
 	goInstall(toolenv(), goBootstrap, append([]string{"-a"}, toolchain...)...)
 	if debug {
+		//3
 		run("", ShowOutput|CheckExit, pathf("%s/compile", tooldir), "-V=full")
 		copyfile(pathf("%s/compile3", tooldir), pathf("%s/compile", tooldir), writeExec)
 	}
@@ -1553,7 +1554,17 @@ func cmdbootstrap() {
 		xprintf("Building packages and commands for target, %s/%s.\n", goos, goarch)
 	}
 	goInstall(nil, goBootstrap, "std")
+	//4
+	goCmd(toolenv(), pathf("%s/compile", tooldir), "-V=full")
 	goInstall(toolenv(), goBootstrap, "cmd")
+	if debug {
+		fmt.Printf("==workerdir%v %v\n", workdir, tooldir)
+		run("", ShowOutput|CheckExit, pathf("%s/compile", tooldir), "-V=full")
+		// checkNotStale(toolenv(), goBootstrap, toolchain...)
+		//5
+		copyfile(pathf("%s/compile4", tooldir), pathf("%s/compile", tooldir), writeExec)
+	}
+	os.Exit(3233)
 	checkNotStale(toolenv(), goBootstrap, toolchain...)
 	checkNotStale(nil, goBootstrap, "std")
 	checkNotStale(toolenv(), goBootstrap, "cmd")

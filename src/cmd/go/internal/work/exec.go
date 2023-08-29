@@ -852,6 +852,7 @@ OverlayLoop:
 
 	// Compile Go.
 	objpkg := objdir + "_pkg_.a"
+	fmt.Printf("==compiel %v %v %v\n", objpkg, gofiles, p)
 	ofile, out, err := BuildToolchain.gc(b, a, objpkg, icfg.Bytes(), embedcfg, symabis, len(sfiles) > 0, gofiles)
 	if len(out) > 0 {
 		output := b.processOutput(out)
