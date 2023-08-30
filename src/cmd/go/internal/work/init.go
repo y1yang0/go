@@ -31,7 +31,7 @@ func BuildInit() {
 		base.Fatalf("go: internal error: work.BuildInit called more than once")
 	}
 	buildInitStarted = true
-	//base.AtExit(closeBuilders)
+	base.AtExit(closeBuilders)
 
 	modload.Init()
 	instrumentInit()

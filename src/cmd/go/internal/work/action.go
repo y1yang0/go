@@ -25,6 +25,7 @@ import (
 	"cmd/go/internal/cache"
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/load"
+	"cmd/go/internal/robustio"
 	"cmd/go/internal/str"
 	"cmd/go/internal/trace"
 	"cmd/internal/buildid"
@@ -319,39 +320,39 @@ func NewBuilder(workDir string) *Builder {
 var builderWorkDirs sync.Map // *Builder → WorkDir
 
 func (b *Builder) Close() error {
-	// wd, ok := builderWorkDirs.Load(b)
-	// if !ok {
-	// 	return nil
-	// }
-	// defer builderWorkDirs.Delete(b)
+	wd, ok := builderWorkDirs.Load(b)
+	if !ok {
+		return nil
+	}
+	defer builderWorkDirs.Delete(b)
 
-	// if b.WorkDir != wd.(string) {
-	// 	base.Errorf("go: internal error: Builder WorkDir unexpectedly changed from %s to %s", wd, b.WorkDir)
-	// }
+	if b.WorkDir != wd.(string) {
+		base.Errorf("go: internal error: Builder WorkDir unexpectedly changed from %s to %s", wd, b.WorkDir)
+	}
 
-	// if !cfg.BuildWork {
-	// 	if err := robustio.RemoveAll(b.WorkDir); err != nil {
-	// 		return err
-	// 	}
-	// }
-	// b.WorkDir = ""
+	if !cfg.BuildWork {
+		if err := robustio.RemoveAll(b.WorkDir); err != nil {
+			return err
+		}
+	}
+	b.WorkDir = ""
 	return nil
 }
 
 func closeBuilders() {
-	// leakedBuilders := 0
-	// builderWorkDirs.Range(func(bi, _ any) bool {
-	// 	leakedBuilders++
-	// 	if err := bi.(*Builder).Close(); err != nil {
-	// 		base.Error(err)
-	// 	}
-	// 	return true
-	// })
+	leakedBuilders := 0
+	builderWorkDirs.Range(func(bi, _ any) bool {
+		leakedBuilders++
+		if err := bi.(*Builder).Close(); err != nil {
+			base.Error(err)
+		}
+		return true
+	})
 
-	// if leakedBuilders > 0 && base.GetExitStatus() == 0 {
-	// 	fmt.Fprintf(os.Stderr, "go: internal error: Builder leaked on successful exit\n")
-	// 	base.SetExitStatus(1)
-	// }
+	if leakedBuilders > 0 && base.GetExitStatus() == 0 {
+		fmt.Fprintf(os.Stderr, "go: internal error: Builder leaked on successful exit\n")
+		base.SetExitStatus(1)
+	}
 }
 
 func CheckGOOSARCHPair(goos, goarch string) error {

@@ -349,7 +349,7 @@ func xexit(n int) {
 
 // xatexit schedules the exit-handler f to be run when the program exits.
 func xatexit(f func()) {
-	//atexits = append(atexits, f)
+	atexits = append(atexits, f)
 }
 
 // xprintf prints a message to standard output.
