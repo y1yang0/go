@@ -51,11 +51,11 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 			storePtr := st.Args[0]
 			at := getMemoryAlias(loadPtr, storePtr)
 			fmt.Printf("%v == %v with %v in %v\n", at, loadPtr.LongString(), storePtr.LongString(), val.Block.Func.Name)
-			// if at != NoAlias {
-			// return false
-			// }
+			if at != NoAlias {
+				return false
+			}
 		}
-		// return true
+		return true
 	} else if val.Op == OpStore {
 		if len(loads) == 0 && len(stores) == 1 /*itself only*/ {
 			return true
@@ -65,26 +65,13 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 			storePtr := val.Args[0]
 			at := getMemoryAlias(ptr, storePtr)
 			fmt.Printf("%v == %v with %v in %v\n", at, ptr.LongString(), storePtr.LongString(), val.Block.Func.Name)
-			// if at != NoAlias {
-			// return false
-			// }
+			if at != NoAlias {
+				return false
+			}
 		}
+		return true
 	}
 	return false
-}
-
-func hoist(loopnest *loopnest, loop *loop, block *Block, val *Value) {
-	for valIdx, v := range block.Values {
-		if val != v {
-			continue
-		}
-		domBlock := loopnest.sdom.Parent(loop.header)
-		// if block.Func.pass.debug >= 1 {
-		printInvariant(val, block, domBlock)
-		// }
-		val.moveTo(domBlock, valIdx)
-		break
-	}
 }
 
 // isExecuteUnconditionally checks if Value is guaranteed to execute during loop iterations
@@ -101,6 +88,28 @@ func (s *state) isExecuteUnconditionally(val *Value) bool {
 	return true
 }
 
+func hoist(loopnest *loopnest, loop *loop, val *Value) {
+	for valIdx, v := range val.Block.Values {
+		if val != v {
+			continue
+		}
+		domBlock := loopnest.sdom.Parent(loop.header)
+		// if block.Func.pass.debug >= 1 {
+		printInvariant(val, val.Block, domBlock)
+		// }
+		val.moveTo(domBlock, valIdx)
+		break
+	}
+}
+
+func canSpeculativeExecute(val *Value) bool {
+	switch val.Op {
+	case OpLoad, OpStore:
+		return false
+	}
+	return true
+}
+
 // tryHoist hoists profitable loop invariant to block that dominates the entire loop.
 // Value is considered as loop invariant if all its inputs are defined outside the loop
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
@@ -109,13 +118,24 @@ func (s *state) tryHoist(invariants map[*Value]bool) {
 	for val, _ := range invariants {
 		// Instructions are guaranteed to execute?
 		if !s.isExecuteUnconditionally(val) {
+			fmt.Printf("==not execute unconditional%v\n", val)
 			continue
 		}
 		// Instructions access different memory locations?
 		if !s.hasMemoryAlias(val) {
+			fmt.Printf("==has mem alias%v\n", val)
 			continue
 		}
-		// hoist(loopnest, loop, block, val)
+		if canSpeculativeExecute(val) {
+			hoist(s.loopnest, s.loop, val)
+		} else {
+			fmt.Printf("==can not speculate%v\n", val.LongString())
+			if s.loopnest.f.rotateLoop(s.loop) {
+				hoist(s.loopnest, s.loop, val)
+			} else {
+				fmt.Printf("==can not rotate%v\n", s.loop.FullString())
+			}
+		}
 	}
 }
 
@@ -192,6 +212,9 @@ func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 // licm stands for loop invariant code motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
+	// if f.Name != "whatthefuck" {
+	// 	return
+	// }
 	loopnest := f.loopnest()
 	if loopnest.hasIrreducible {
 		return
@@ -200,24 +223,25 @@ func licm(f *Func) {
 		return
 	}
 	for _, loop := range loopnest.loops {
-		// loopBlocks := loopnest.findLoopBlocks(loop)
+		loopBlocks := loopnest.findLoopBlocks(loop)
 		// if len(loopBlocks) >= MaxLoopBlockSize {
 		// 	continue
 		// }
 
-		// // try to hoist loop invariant outside the loop
-		// loopnest.assembleChildren() // initialize loop children
-		// loopnest.findExits()        // initialize loop exits
-		// state := &state{loopnest: loopnest, loop: loop}
-		// invariants := state.markInvariant(loopBlocks)
-		// if invariants != nil {
-		// 	state.tryHoist(invariants)
-		// }
-		ok := f.rotateLoop(loop)
-		if ok {
-			//fmt.Printf("success: %s \n", f.Name)
-		} else {
-			//fmt.Printf("bad: %s \n", f.Name)
+		// try to hoist loop invariant outside the loop
+		loopnest.assembleChildren() // initialize loop children
+		loopnest.findExits()        // initialize loop exits
+		state := &state{loopnest: loopnest, loop: loop}
+		invariants := state.markInvariant(loopBlocks)
+		if invariants != nil {
+			fmt.Printf("==invariants %v\n", invariants)
+			state.tryHoist(invariants)
 		}
+		// ok := f.rotateLoop(loop)
+		// if ok {
+		// 	//fmt.Printf("success: %s \n", f.Name)
+		// } else {
+		// 	//fmt.Printf("bad: %s \n", f.Name)
+		// }
 	}
 }

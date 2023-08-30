@@ -12,8 +12,7 @@ type loop struct {
 	exit   *Block // The unique exit block of this loop, if any
 	latch  *Block // Source of backedge, where increment happens
 	body   *Block // The first loop body, near to the header
-
-	outer *loop // loop containing this loop
+	outer  *loop  // Outer loop containing this loop
 
 	// By default, children, exits, and depth are not initialized.
 	children []*loop  // loops nested directly within this loop. Initialized by assembleChildren().

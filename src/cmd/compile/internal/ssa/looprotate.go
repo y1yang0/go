@@ -93,8 +93,8 @@ import (
 //	└─► loop exit
 //
 // Loop header no longer dominates the entire loop, loop guard dominates it instead.
-// If Values defined in loop were used outside loop, all these uses should be
-// replaced by a new Phi node at loop exit, which merges control flow from loop
+// If Values defined in the loop were used outside loop, all these uses should be
+// replaced by a new Phi node at loop exit which merges control flow from loop
 // header and loop guard.
 //
 // The detailed algorithm is summarized as following steps
