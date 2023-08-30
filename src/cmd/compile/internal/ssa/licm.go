@@ -204,10 +204,6 @@ func licm(f *Func) {
 		// if len(loopBlocks) >= MaxLoopBlockSize {
 		// 	continue
 		// }
-		// TODO: loop contains loop cases.
-		if loop.outer != nil {
-			continue
-		}
 
 		// // try to hoist loop invariant outside the loop
 		// loopnest.assembleChildren() // initialize loop children

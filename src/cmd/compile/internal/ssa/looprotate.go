@@ -6,6 +6,7 @@ package ssa
 
 import (
 	"fmt"
+	"sort"
 )
 
 // ----------------------------------------------------------------------------
@@ -62,34 +63,34 @@ import (
 // program semantics while original program executes them only if test is okay.
 // An additional loop guard is required to ensure this.
 //
-//        entry
-//          │
-//          │
-//          │
-//          ▼
-//   ┌───loop guard
-//   │      │
-//   │      │
-//   │      │
-//   │      │
-//   │      ▼
-//   │  loop header◄──┐
-//   │      │         │
-//   │      │         │
-//   │      │         │
-//   │      ▼         │
-//   │  loop body     │
-//   │      │         │
-//   │      │         │
-//   │      │         │
-//   │      ▼         │
-//   │  loop latch────┘
-//   │      │
-//   │      │
-//   │      │
-//   │	    │
-//   │      ▼
-//   └─► loop exit
+//	     entry
+//	       │
+//	       │
+//	       │
+//	       ▼
+//	┌───loop guard
+//	│      │
+//	│      │
+//	│      │
+//	│      │
+//	│      ▼
+//	│  loop header◄──┐
+//	│      │         │
+//	│      │         │
+//	│      │         │
+//	│      ▼         │
+//	│  loop body     │
+//	│      │         │
+//	│      │         │
+//	│      │         │
+//	│      ▼         │
+//	│  loop latch────┘
+//	│      │
+//	│      │
+//	│      │
+//	│	   │
+//	│      ▼
+//	└─► loop exit
 //
 // Loop header no longer dominates the entire loop, loop guard dominates it instead.
 // If Values defined in loop were used outside loop, all these uses should be
@@ -97,11 +98,73 @@ import (
 // header and loop guard.
 //
 // The detailed algorithm is summarized as following steps
-// TODO: 详细描述算法步骤
+//
+//  1. Check whether loop can apply loop rotate
+//     * Loop must be a natural loop and have a single exit and so on..
+//     * Collect all values defined within a loop and used outside of the loop.
+//     I place it earlier because currently it cannot handle a value outside of
+//     a loop that depends on a non-Phi value defined within the loop, it should
+//     bail out compilation in such cases.
+//
+//  2. Rotate condition and rewire loop edges
+//     * Move conditional test from loop header to loop latch.
+//     * Rewire loop header to loop body unconditionally.
+//     * Rewire loop latch to header and exit based on new coming conditional test.
+//     * Create new loop guard block and wire it to appropriate blocks.
+//
+//  3. Update data dependencies after CFG transformation
+//     * Update cond to use updated Phi as arguments.
+//     * Merge any uses outside loop as loop header may not dominate them anymore.
+//     This relies on the value collected in the first step.
+//
 // TODO: 插入必要的assert
-// TODO: 插入必要的debug print
-// TODO: 新增IR测试用例looprotate_test.go
-// TODO: 在每个pass之后都执行loop rotate，让他更robustness
+// TODO: 新增测试用例
+// TODO: 压力测试，在每个pass之后都执行loop rotate；执行多次loop rotate；打开ssacheck；确保无bug
+// TODO: 尽可能放松initLoopForm限制
+func (fn *Func) rotateLoop(loop *loop) bool {
+	// if fn.Name != "Main.func1" {
+	// 	return false
+	// }
+
+	// Initilaize loop form and check if its a natural loop
+	if msg := loop.initLoopForm(fn); msg != "" {
+		fmt.Printf("Bad %v for loop rotation: %s %v\n", loop.FullString(), msg, fn.Name)
+		return false
+	}
+
+	// Collect all use blocks that depend on Value defined inside loop
+	defUses, bailout := loop.collectLoopUse(fn)
+	if bailout {
+		fmt.Printf("Bad %v for loop rotation: use loop value other than Phi\n")
+		return false
+	}
+
+	// Move conditional test from loop header to loop latch
+	cond := loop.moveCond()
+
+	// Rewire loop header to loop body unconditionally
+	loop.rewireLoopHeader()
+
+	// Rewire loop latch to header and exit based on new coming conditional test
+	loop.rewireLoopLatch(cond)
+
+	// Create new loop guard block and wire it to appropriate blocks
+	loop.createLoopGuard(fn, cond)
+
+	// Update cond to use updated Phi as arguments
+	loop.updateCond(cond)
+
+	// Merge any uses outside loop as loop header may not dominate them anymore
+	loop.mergeLoopUse(fn, defUses)
+
+	// Gosh, loop is rotated
+	loop.verifyRotatedForm()
+
+	// TODO: 新增verifyLoopRotated，验证rotated后的loop形式符合预期
+	fmt.Printf("Loop Rotation %v in %v\n", loop.FullString(), fn.Name)
+	fn.invalidateCFG()
+	return true
+}
 
 func (loop *loop) FullString() string {
 	// Loop: loop header, B: loop body, E: loop exit, L: loop latch, G: loop guard
@@ -111,6 +174,11 @@ func (loop *loop) FullString() string {
 
 func (loop *loop) initLoopForm(fn *Func) string {
 	fn.loopnest().findExits() // initialize loop exits
+
+	if loop.outer != nil {
+		// TODO: 太过严格，考虑放松？
+		return "loop contains loop case"
+	}
 
 	loopHeader := loop.header
 	// loopHeader <- entry(0), loopLatch(1)?
@@ -146,20 +214,11 @@ func (loop *loop) initLoopForm(fn *Func) string {
 		return "loop exit is invalid"
 	}
 
-	cond := loopHeader.Controls[0]
-	entry := fn.Sdom().Parent(loopHeader)
-	for _, arg := range cond.Args {
-		// TODO: 太过严格，考虑放松？
-		// skip cases we couldn't create phi node. like use method calls' result as loop condition.
-		if fn.Sdom().IsAncestorEq(arg.Block, entry) || arg.Op == OpPhi {
-			continue
-		}
-		return fmt.Sprintf("loop use method calls as cond. %s in block: %s", arg.LongString(), arg.Block.String())
-	}
 	return ""
 }
 
-func (loop *loop) verifyRotatedLoop() {
+func (loop *loop) verifyRotatedForm() {
+	// TODO: TO IMPLEMENT
 }
 
 // moveCond moves conditional test from loop header to loop latch
@@ -357,7 +416,6 @@ func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	loop.rewireLoopGuard(fn.Sdom(), guardCond)
 }
 
-// Collect all values defined inside loop header, which are used outside loop
 func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
 	defUses := make(map[*Value][]*Block)
 	bad := make(map[*Value]bool)
@@ -380,6 +438,10 @@ func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
 						defUses[arg] = append(defUses[arg], val.Block)
 					} else if val.Op == OpPhi && sdom.IsAncestorEq(loop.exit, block.Preds[idx].b) {
 						defUses[arg] = append(defUses[arg], val.Block)
+					} else {
+						if !sdom.IsAncestorEq(loop.header, block) {
+							panic("must be used in loop")
+						}
 					}
 				} else if _, exist := bad[arg]; exist {
 					// Use value other than Phi? We are incapable of handling
@@ -403,84 +465,47 @@ func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
 	return defUses, false
 }
 
-// If the basic block following the loop has value dependencies on the values
-// defined within the current loop, it is necessary to create a Phi at the loop
-// exit and use it to replace the values defined within the loop. This is because
-// after inserting the loop guard, the loop may not always dominate the loop exit,
-// loop exit merges control flows from loop guard and loop latch.
 func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]*Block) {
 	sdom := fn.Sdom()
 
-	for def, useBlock := range defUses {
+	// Sort defUses so that we have consistent results for multiple compilations.
+	loopDefs := make([]*Value, 0)
+	for k, _ := range defUses {
+		loopDefs = append(loopDefs, k)
+	}
+	sort.SliceStable(loopDefs, func(i, j int) bool {
+		return loopDefs[i].ID < loopDefs[j].ID
+	})
+
+	for _, loopDef := range loopDefs {
+		useBlock := defUses[loopDef]
 		// No use? Good, nothing to do
 		if len(useBlock) == 0 {
 			continue
 		}
 
-		phi := fn.newValueNoBlock(OpPhi, def.Type, def.Pos)
-		if len(def.Block.Preds) != 2 {
-			fmt.Printf("loop header must be 2 pred %v %v\n", def, loop.FullString())
+		phi := fn.newValueNoBlock(OpPhi, loopDef.Type, loopDef.Pos)
+		if len(loopDef.Block.Preds) != 2 {
+			fmt.Printf("loop header must be 2 pred %v %v\n", loopDef, loop.FullString())
 			panic("loop header must be 2 pred ")
 		}
 		var phiArgs [2]*Value
 		// loopExit <- loopLatch(0), loopGuard(1)
-		for k := 0; k < len(def.Block.Preds); k++ {
+		for k := 0; k < len(loopDef.Block.Preds); k++ {
 			// argument block of use must dominate loopGuard
-			if sdom.IsAncestorEq(def.Block.Preds[k].b, loop.guard) {
-				phiArgs[1] = def.Args[k]
+			if sdom.IsAncestorEq(loopDef.Block.Preds[k].b, loop.guard) {
+				phiArgs[1] = loopDef.Args[k]
 			} else {
-				phiArgs[0] = def.Args[k]
+				phiArgs[0] = loopDef.Args[k]
 			}
 		}
 		phi.AddArgs(phiArgs[:]...)
 		// fmt.Printf("== dep %v is replaced by %v in block%v\n", dep.LongString(), phi.LongString(), blocks)
 		for _, block := range useBlock {
-			block.replaceUses(def, phi)
+			block.replaceUses(loopDef, phi)
 		}
 		loop.exit.placeValue(phi) // move phi into block after replaceUses
 	}
-}
-
-func (fn *Func) rotateLoop(loop *loop) bool {
-	// if fn.Name != "Main.func1" {
-	// 	return false
-	// }
-
-	// Initilaize loop form and check if its a natural loop
-	if msg := loop.initLoopForm(fn); msg != "" {
-		return false
-	}
-
-	// Collect all use blocks that depend on Value defined inside loop
-	defUses, bailout := loop.collectLoopUse(fn)
-	if bailout {
-		//fmt.Printf("Unable to process loop use other than Phi\n")
-		return false
-	}
-
-	// Move conditional test from loop header to loop latch
-	cond := loop.moveCond()
-
-	// Rewire loop header to loop body unconditionally
-	loop.rewireLoopHeader()
-
-	// Rewire loop latch to header and exit based on new coming conditional test
-	loop.rewireLoopLatch(cond)
-
-	// Create new loop guard block and wire it to appropriate blocks
-	loop.createLoopGuard(fn, cond)
-
-	// Update cond to use updated Phi as arguments
-	loop.updateCond(cond)
-
-	// Merge any uses outside loop as loop header may not dominate them anymore
-	loop.mergeLoopUse(fn, defUses)
-
-	// Gosh, loop is rotated
-	// TODO: 新增verifyLoopRotated，验证rotated后的loop形式符合预期
-	// fmt.Printf("Loop Rotation: %v %v\n", loop.FullString(), fn.Name)
-	fn.invalidateCFG()
-	return true
 }
 
 // blockOrdering converts loops with a check-loop-condition-at-beginning
