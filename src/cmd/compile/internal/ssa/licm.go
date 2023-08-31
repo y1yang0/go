@@ -4,7 +4,10 @@
 
 package ssa
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // ----------------------------------------------------------------------------
 // Loop Invariant Code Motion
@@ -20,10 +23,12 @@ import "fmt"
 const MaxLoopBlockSize = 8
 
 type state struct {
-	loopnest *loopnest // the global loopnest
-	loop     *loop     // target loop to be optimized out
-	loads    []*Value
-	stores   []*Value
+	loopnest   *loopnest // the global loopnest
+	loop       *loop     // target loop to be optimized out
+	loads      []*Value
+	stores     []*Value
+	invariants map[*Value]bool
+	hoisted    map[*Value]bool
 }
 
 func printInvariant(val *Value, block *Block, domBlock *Block) {
@@ -102,43 +107,6 @@ func hoist(loopnest *loopnest, loop *loop, val *Value) {
 	}
 }
 
-func canSpeculativeExecute(val *Value) bool {
-	switch val.Op {
-	case OpLoad, OpStore:
-		return false
-	}
-	return true
-}
-
-// tryHoist hoists profitable loop invariant to block that dominates the entire loop.
-// Value is considered as loop invariant if all its inputs are defined outside the loop
-// or all its inputs are loop invariants. Since loop invariant will immediately moved
-// to dominator block of loop, the first rule actually already implies the second rule
-func (s *state) tryHoist(invariants map[*Value]bool) {
-	for val, _ := range invariants {
-		// Instructions are guaranteed to execute?
-		if !s.isExecuteUnconditionally(val) {
-			fmt.Printf("==not execute unconditional%v\n", val)
-			continue
-		}
-		// Instructions access different memory locations?
-		if !s.hasMemoryAlias(val) {
-			fmt.Printf("==has mem alias%v\n", val)
-			continue
-		}
-		if canSpeculativeExecute(val) {
-			hoist(s.loopnest, s.loop, val)
-		} else {
-			fmt.Printf("==can not speculate%v\n", val.LongString())
-			if s.loopnest.f.rotateLoop(s.loop) {
-				hoist(s.loopnest, s.loop, val)
-			} else {
-				fmt.Printf("==can not rotate%v\n", s.loop.FullString())
-			}
-		}
-	}
-}
-
 func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 	loopValues := make(map[*Value]bool)
 	invariants := make(map[*Value]bool)
@@ -209,10 +177,69 @@ func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 	return invariants
 }
 
+// tryHoist hoists profitable loop invariant to block that dominates the entire loop.
+// Value is considered as loop invariant if all its inputs are defined outside the loop
+// or all its inputs are loop invariants. Since loop invariant will immediately moved
+// to dominator block of loop, the first rule actually already implies the second rule
+func (s *state) tryHoist(val *Value) bool {
+	s.hoisted[val] = false
+	// arguments of val are all loop invariant, but they are not necessarily
+	// hoistable due to various constraints, for example, memory alias, so
+	// we try to hoist its arguments first
+	for _, arg := range val.Args {
+		if _, exist := s.invariants[arg]; !exist {
+			// must be type of memory or defiend outside loop
+			if !arg.Type.IsMemory() && !s.loopnest.sdom.IsAncestorEq(arg.Block, s.loop.header) {
+				fmt.Printf("must define outside loop %v\n", arg.LongString())
+				panic("must define outside loop")
+			}
+			continue
+		} else {
+			hoisted, visited := s.hoisted[arg]
+			if !visited {
+				if !s.tryHoist(arg) {
+					return false
+				}
+			}
+			if !hoisted {
+				return false
+			}
+		}
+	}
+
+	// all arugments are hoisted, we can hoist val now
+	if canSpeculativelyExecuteValue(val) {
+		hoist(s.loopnest, s.loop, val)
+		s.hoisted[val] = true
+		return true
+	}
+
+	// Instructions are guaranteed to execute?
+	if !s.isExecuteUnconditionally(val) {
+		fmt.Printf("==not execute unconditional%v\n", val)
+		return false
+	}
+	// Instructions access different memory locations?
+	if !s.hasMemoryAlias(val) {
+		fmt.Printf("==has mem alias%v\n", val)
+		return false
+	}
+	fmt.Printf("==can not speculate%v\n", val.LongString())
+	if !s.loopnest.f.rotateLoop(s.loop) {
+		fmt.Printf("==can not rotate%v\n", s.loop.FullString())
+		return false
+	}
+
+	fmt.Printf("==hoist2\n")
+	hoist(s.loopnest, s.loop, val)
+	s.hoisted[val] = true
+	return true
+}
+
 // licm stands for loop invariant code motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
-	// if f.Name != "whatthefuck" {
+	// if f.Name != "(*itabTableType).find" {
 	// 	return
 	// }
 	loopnest := f.loopnest()
@@ -231,11 +258,25 @@ func licm(f *Func) {
 		// try to hoist loop invariant outside the loop
 		loopnest.assembleChildren() // initialize loop children
 		loopnest.findExits()        // initialize loop exits
-		state := &state{loopnest: loopnest, loop: loop}
-		invariants := state.markInvariant(loopBlocks)
-		if invariants != nil {
+		s := &state{loopnest: loopnest, loop: loop}
+		invariants := s.markInvariant(loopBlocks)
+		// TODO: invariants is unordered
+		if invariants != nil && len(invariants) > 0 {
 			fmt.Printf("==invariants %v\n", invariants)
-			state.tryHoist(invariants)
+			s.invariants = invariants
+			s.hoisted = make(map[*Value]bool)
+
+			sortedInvariants := make([]*Value, 0)
+			for k, _ := range invariants {
+				sortedInvariants = append(sortedInvariants, k)
+			}
+			sort.SliceStable(sortedInvariants, func(i, j int) bool {
+				return sortedInvariants[i].ID < sortedInvariants[j].ID
+			})
+
+			for _, invariant := range sortedInvariants {
+				s.tryHoist(invariant)
+			}
 		}
 		// ok := f.rotateLoop(loop)
 		// if ok {
