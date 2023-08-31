@@ -120,14 +120,14 @@ import (
 // TODO: 插入必要的assert
 // TODO: 新增测试用例
 // TODO: 压力测试，在每个pass之后都执行loop rotate；执行多次loop rotate；打开ssacheck；确保无bug
-// TODO: 尽可能放松initLoopForm限制
+// TODO: 尽可能放松buildLoopForm限制
 func (fn *Func) rotateLoop(loop *loop) bool {
 	// if fn.Name != "Main.func1" {
 	// 	return false
 	// }
 
-	// Initilaize loop form and check if its a natural loop
-	if msg := loop.initLoopForm(fn); msg != "" {
+	// Try to build loop form and bail out if failure
+	if msg := loop.buildLoopForm(fn); msg != "" {
 		fmt.Printf("Bad %v for loop rotation: %s %v\n", loop.FullString(), msg, fn.Name)
 		return false
 	}
@@ -145,7 +145,7 @@ func (fn *Func) rotateLoop(loop *loop) bool {
 	// Rewire loop header to loop body unconditionally
 	loop.rewireLoopHeader()
 
-	// Rewire loop latch to header and exit based on new coming conditional test
+	// Rewire loop latch to header and exit based on new conditional test
 	loop.rewireLoopLatch(cond)
 
 	// Create new loop guard block and wire it to appropriate blocks
@@ -154,15 +154,13 @@ func (fn *Func) rotateLoop(loop *loop) bool {
 	// Update cond to use updated Phi as arguments
 	loop.updateCond(cond)
 
-	// Merge any uses outside loop as loop header may not dominate them anymore
+	// Merge any uses outside loop as loop header doesnt dominate them anymore
 	loop.mergeLoopUse(fn, defUses)
 
 	// Gosh, loop is rotated
 	loop.verifyRotatedForm()
 
-	// TODO: 新增verifyLoopRotated，验证rotated后的loop形式符合预期
 	fmt.Printf("Loop Rotation %v in %v\n", loop.FullString(), fn.Name)
-	fn.invalidateCFG()
 	return true
 }
 
@@ -172,9 +170,7 @@ func (loop *loop) FullString() string {
 		loop.header, loop.body, loop.exit, loop.latch, loop.guard)
 }
 
-func (loop *loop) initLoopForm(fn *Func) string {
-	fn.loopnest().findExits() // initialize loop exits
-
+func (loop *loop) buildLoopForm(fn *Func) string {
 	if loop.outer != nil {
 		// TODO: 太过严格，考虑放松？
 		return "loop contains loop case"
@@ -187,11 +183,12 @@ func (loop *loop) initLoopForm(fn *Func) string {
 		loopHeader.Kind != BlockIf {
 		return "illegal loop header"
 	}
-	loop.exit = loopHeader.Succs[1].b
+	fn.loopnest().findExits() // initialize loop exits
+	loopExit := loop.header.Succs[1].b
+	loop.exit = loopExit
 	loop.latch = loopHeader.Preds[1].b
 	loop.body = loopHeader.Succs[0].b
 
-	loopExit := loop.header.Succs[1].b
 	if len(loopExit.Preds) != 1 {
 		// TODO: 太过严格，考虑放松？
 		return "loop exit requries 1 predecessor"
@@ -263,13 +260,13 @@ func (loop *loop) updateCond(cond *Value) {
 	// After
 	//	 loop header:
 	//	 v6 = Phi v5 v19
-	//	 Plain → loop latch
+	//	 Plain -> loop latch
 	//
 	//	 loop latch:
 	//	 ...
 	//	 v19 = Load ptr mem
 	//	 v8 = IsNonNil v6
-	//	 If v8 → loop header, loop exit
+	//	 If v8 -> loop header, loop exit
 	//
 	// After loop rotation, v8 should use v19 instead of un-updated v6 otherwise
 	// it will lose one update. The same occurrence also happens in mergeLoopUse.
@@ -486,7 +483,6 @@ func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]*Block) {
 
 		phi := fn.newValueNoBlock(OpPhi, loopDef.Type, loopDef.Pos)
 		if len(loopDef.Block.Preds) != 2 {
-			fmt.Printf("loop header must be 2 pred %v %v\n", loopDef, loop.FullString())
 			panic("loop header must be 2 pred ")
 		}
 		var phiArgs [2]*Value
@@ -500,7 +496,6 @@ func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]*Block) {
 			}
 		}
 		phi.AddArgs(phiArgs[:]...)
-		// fmt.Printf("== dep %v is replaced by %v in block%v\n", dep.LongString(), phi.LongString(), blocks)
 		for _, block := range useBlock {
 			block.replaceUses(loopDef, phi)
 		}
