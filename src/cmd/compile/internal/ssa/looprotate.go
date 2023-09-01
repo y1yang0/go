@@ -122,9 +122,9 @@ import (
 // TODO: 压力测试，在每个pass之后都执行loop rotate；执行多次loop rotate；打开ssacheck；确保无bug
 // TODO: 尽可能放松buildLoopForm限制
 func (fn *Func) rotateLoop(loop *loop) bool {
-	if fn.Name != "tzsetOffset" {
-		return false
-	}
+	// if fn.Name != "Main.func1" {
+	// 	return false
+	// }
 
 	// Try to build loop form and bail out if failure
 	if msg := loop.buildLoopForm(fn); msg != "" {
@@ -196,16 +196,7 @@ func (loop *loop) buildLoopForm(fn *Func) string {
 
 	if len(loop.exits) != 1 {
 		// FIXME: 太过严格，考虑放松？
-		for _, exit:= range loop.exits {
-			if !fn.Sdom().IsAncestorEq(loopHeader, exit) {
-				return "loop exit is not dominated by header"
-			}
-			// for _,val:= range exit.Values {
-			// 	if val.Op != OpPanicBounds && val.Op != OpPanicExtend {
-			// 		return "loop exit more than one."
-			// 	}
-			// }
-		}
+		return "loop exit more than one."
 	}
 
 	illForm := true
@@ -224,10 +215,7 @@ func (loop *loop) buildLoopForm(fn *Func) string {
 }
 
 func (loop *loop) verifyRotatedForm() {
-	// if len(loop.header.Succs)!=1 || len(loop.exit.Preds)!=2 ||
-	// 	len(loop.latch.Succs)!=2 || len(loop.guard.Succs)!=2{
-	// 	panic("Bad shape after rotation")
-	// }
+	// TODO: TO IMPLEMENT
 }
 
 // moveCond moves conditional test from loop header to loop latch
@@ -425,19 +413,14 @@ func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	loop.rewireLoopGuard(fn.Sdom(), guardCond)
 }
 
-type loopUses struct {
-	defUses  map[*Value][]*Block
-	domExit  map[*Block]*Block
-}
-
-func (loop *loop) collectLoopUse(fn *Func) (*loopUses, bool) {
-	loopDef := &loopUses {defUses: make(map[*Value][]*Block),domExit: make(map[*Block]*Block)}
+func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
+	defUses := make(map[*Value][]*Block)
 	bad := make(map[*Value]bool)
 	sdom := fn.Sdom()
 
 	for _, val := range loop.header.Values {
 		if val.Op == OpPhi {
-			loopDef.defUses[val] = make([]*Block, 0, val.Uses)
+			defUses[val] = make([]*Block, 0, val.Uses)
 		} else {
 			bad[val] = true
 		}
@@ -447,34 +430,16 @@ func (loop *loop) collectLoopUse(fn *Func) (*loopUses, bool) {
 	for _, block := range fn.Blocks {
 		for _, val := range block.Values {
 			for idx, arg := range val.Args {
-				if _, exist := loopDef.defUses[arg]; exist {
-					// if any one of dedicated loop exit dominates use block
-					for _,exit := range loop.exits {
-						if sdom.IsAncestorEq(exit, block) {
-							loopDef.defUses[arg] = append(loopDef.defUses[arg], val.Block)
-							loopDef.domExit[val.Block] = exit
-							break
-							// defUses[arg] = append(defUses[arg], val.Block)
-						} else if val.Op == OpPhi && sdom.IsAncestorEq(exit, block.Preds[idx].b) {
-							loopDef.defUses[arg] = append(loopDef.defUses[arg], val.Block)
-							loopDef.domExit[val.Block] = exit
-							break
-							// defUses[arg] = append(defUses[arg], val.Block)
-						} else {
-							// if !sdom.IsAncestorEq(loop.header, block) {
-							// 	panic("must be used in loop")
-							// }
+				if _, exist := defUses[arg]; exist {
+					if sdom.IsAncestorEq(loop.exit, block) {
+						defUses[arg] = append(defUses[arg], val.Block)
+					} else if val.Op == OpPhi && sdom.IsAncestorEq(loop.exit, block.Preds[idx].b) {
+						defUses[arg] = append(defUses[arg], val.Block)
+					} else {
+						if !sdom.IsAncestorEq(loop.header, block) {
+							panic("must be used in loop")
 						}
 					}
-					// if sdom.IsAncestorEq(loop.exit, block) {
-					// 	defUses[arg] = append(defUses[arg], val.Block)
-					// } else if val.Op == OpPhi && sdom.IsAncestorEq(loop.exit, block.Preds[idx].b) {
-					// 	defUses[arg] = append(defUses[arg], val.Block)
-					// } else {
-					// 	// if !sdom.IsAncestorEq(loop.header, block) {
-					// 	// 	panic("must be used in loop")
-					// 	// }
-					// }
 				} else if _, exist := bad[arg]; exist {
 					// Use value other than Phi? We are incapable of handling
 					// this case, so we bail out
@@ -482,85 +447,59 @@ func (loop *loop) collectLoopUse(fn *Func) (*loopUses, bool) {
 				}
 			}
 		}
-		for _, exit := range loop.exits {
-			if sdom.IsAncestorEq(exit, block) {
-				for _, ctrl := range block.ControlValues() {
-					if _, exist := loopDef.defUses[ctrl]; exist {
-						loopDef.defUses[ctrl] = append(loopDef.defUses[ctrl], block)
-						loopDef.domExit[block] = exit
-						break
-					} else if _, exist := bad[ctrl]; exist {
-						// Use value other than Phi? We are incapable of handling
-						// this case, so we bail out
-						return nil, true
-					}
+		if sdom.IsAncestorEq(loop.exit, block) {
+			for _, ctrl := range block.ControlValues() {
+				if _, exist := defUses[ctrl]; exist {
+					defUses[ctrl] = append(defUses[ctrl], block)
+				} else if _, exist := bad[ctrl]; exist {
+					// Use value other than Phi? We are incapable of handling
+					// this case, so we bail out
+					return nil, true
 				}
 			}
 		}
-		// if sdom.IsAncestorEq(loop.exit, block) {
-		// 	for _, ctrl := range block.ControlValues() {
-		// 		if _, exist := defUses[ctrl]; exist {
-		// 			defUses[ctrl] = append(defUses[ctrl], block)
-		// 		} else if _, exist := bad[ctrl]; exist {
-		// 			// Use value other than Phi? We are incapable of handling
-		// 			// this case, so we bail out
-		// 			return nil, true
-		// 		}
-		// 	}
-		// }
 	}
-	return loopDef, false
+	return defUses, false
 }
 
-func allocMergePhi(fn *Func, loopDef *Value, loopGuard*Block) *Value {
-	phi := fn.newValueNoBlock(OpPhi, loopDef.Type, loopDef.Pos)
-	if len(loopDef.Block.Preds) != 2 {
-		panic("loop header must be 2 pred ")
-	}
-	var phiArgs [2]*Value
-	// loopExit <- loopLatch(0), loopGuard(1)
-	for k := 0; k < len(loopDef.Block.Preds); k++ {
-		// argument block of use must dominate loopGuard
-		if fn.Sdom().IsAncestorEq(loopDef.Block.Preds[k].b, loopGuard) {
-			phiArgs[1] = loopDef.Args[k]
-		} else {
-			phiArgs[0] = loopDef.Args[k]
-		}
-	}
-	phi.AddArgs(phiArgs[:]...)
-	return phi
-}
+func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]*Block) {
+	sdom := fn.Sdom()
 
-func (loop *loop) mergeLoopUse(fn *Func, loopUses *loopUses) {
 	// Sort defUses so that we have consistent results for multiple compilations.
 	loopDefs := make([]*Value, 0)
-	for k, _ := range loopUses.defUses {
+	for k, _ := range defUses {
 		loopDefs = append(loopDefs, k)
 	}
 	sort.SliceStable(loopDefs, func(i, j int) bool {
 		return loopDefs[i].ID < loopDefs[j].ID
 	})
 
-	mergePhis := make(map[*Block]*Value,0)
 	for _, loopDef := range loopDefs {
-		useBlock := loopUses.defUses[loopDef]
+		useBlock := defUses[loopDef]
 		// No use? Good, nothing to do
 		if len(useBlock) == 0 {
 			continue
 		}
 
-		for _, block := range useBlock {
-			exit := loopUses.domExit[block]
-			phi, exist:= mergePhis[exit];
-			if !exist {
-				phi := allocMergePhi(fn, loopDef, loop.guard)
-				mergePhis[exit] = phi
-				block.replaceUses(loopDef, phi)
-				exit.placeValue(phi) // move phi into block after replaceUses
+		phi := fn.newValueNoBlock(OpPhi, loopDef.Type, loopDef.Pos)
+		if len(loopDef.Block.Preds) != 2 {
+			panic("loop header must be 2 pred ")
+		}
+		var phiArgs [2]*Value
+		// loopExit <- loopLatch(0), loopGuard(1)
+		for k := 0; k < len(loopDef.Block.Preds); k++ {
+			// argument block of use must dominate loopGuard
+			if sdom.IsAncestorEq(loopDef.Block.Preds[k].b, loop.guard) {
+				phiArgs[1] = loopDef.Args[k]
 			} else {
-				block.replaceUses(loopDef, phi)
+				phiArgs[0] = loopDef.Args[k]
 			}
 		}
+		phi.AddArgs(phiArgs[:]...)
+		for _, block := range useBlock {
+			block.replaceUses(loopDef, phi)
+		}
+		loop.exit.placeValue(phi) // move phi into block after replaceUses
 	}
 }
 
