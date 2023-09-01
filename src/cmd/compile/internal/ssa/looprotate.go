@@ -95,7 +95,9 @@ import (
 // Loop header no longer dominates the entire loop, loop guard dominates it instead.
 // If Values defined in the loop were used outside loop, all these uses should be
 // replaced by a new Phi node at loop exit which merges control flow from loop
-// header and loop guard.
+// header and loop guard. This implies that the loop header used to dominate the
+// entire loop, including all loop exits. However, this may not always hold true
+// for some exotic loop exits. It is necessary to check this before rotation.
 //
 // The detailed algorithm is summarized as following steps
 //
@@ -116,26 +118,26 @@ import (
 //     * Update cond to use updated Phi as arguments.
 //     * Merge any uses outside loop as loop header may not dominate them anymore.
 //     This relies on the value collected in the first step.
-//
+
 // TODO: 插入必要的assert
 // TODO: 新增测试用例
 // TODO: 压力测试，在每个pass之后都执行loop rotate；执行多次loop rotate；打开ssacheck；确保无bug
 // TODO: 尽可能放松buildLoopForm限制
 func (fn *Func) rotateLoop(loop *loop) bool {
-	// if fn.Name != "Main.func1" {
-	// 	return false
-	// }
+	if fn.Name != "value" {
+		return false
+	}
 
 	// Try to build loop form and bail out if failure
 	if msg := loop.buildLoopForm(fn); msg != "" {
-		fmt.Printf("Bad %v for loop rotation: %s %v\n", loop.FullString(), msg, fn.Name)
+		fmt.Printf("Bad %v for rotation: %s %v\n", loop.LongString(), msg, fn.Name)
 		return false
 	}
 
 	// Collect all use blocks that depend on Value defined inside loop
 	defUses, bailout := loop.collectLoopUse(fn)
 	if bailout {
-		fmt.Printf("Bad %v for loop rotation: use loop value other than Phi\n")
+		fmt.Printf("Bad %v for rotation: use bad %v\n", loop.LongString(), fn.Name)
 		return false
 	}
 
@@ -160,14 +162,8 @@ func (fn *Func) rotateLoop(loop *loop) bool {
 	// Gosh, loop is rotated
 	loop.verifyRotatedForm()
 
-	fmt.Printf("Loop Rotation %v in %v\n", loop.FullString(), fn.Name)
+	fmt.Printf("Loop Rotation %v in %v\n", loop.LongString(), fn.Name)
 	return true
-}
-
-func (loop *loop) FullString() string {
-	// Loop: loop header, B: loop body, E: loop exit, L: loop latch, G: loop guard
-	return fmt.Sprintf("Loop@%v(B@%v E@%v L@%v G@%v)",
-		loop.header, loop.body, loop.exit, loop.latch, loop.guard)
 }
 
 func (loop *loop) buildLoopForm(fn *Func) string {
@@ -196,7 +192,16 @@ func (loop *loop) buildLoopForm(fn *Func) string {
 
 	if len(loop.exits) != 1 {
 		// FIXME: 太过严格，考虑放松？
-		return "loop exit more than one."
+		for _, exit := range loop.exits {
+			if !fn.Sdom().IsAncestorEq(loopHeader, exit) {
+				return "loop exit is not dominated by header"
+			}
+			// for _,val:= range exit.Values {
+			// 	if val.Op != OpPanicBounds && val.Op != OpPanicExtend {
+			// 		return "loop exit more than one."
+			// 	}
+			// }
+		}
 	}
 
 	illForm := true
@@ -212,10 +217,6 @@ func (loop *loop) buildLoopForm(fn *Func) string {
 	}
 
 	return ""
-}
-
-func (loop *loop) verifyRotatedForm() {
-	// TODO: TO IMPLEMENT
 }
 
 // moveCond moves conditional test from loop header to loop latch
@@ -374,7 +375,7 @@ func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	// TODO: 更新一下新cond的aux信息，比如变量名字，方便debug
 	var guardCond *Value
 	if cond.Op != OpPhi {
-		// Normal case, copy phi
+		// Normal case, clone conditional test
 		//	  If (Less v1 Phi(v2 v3)) -> loop body, loop exit
 		// => If (Less v1 v2)         -> loop header, loop exit
 		guardCond = loopGuard.NewValue0IA(cond.Pos, cond.Op, cond.Type, cond.AuxInt, cond.Aux)
@@ -413,14 +414,20 @@ func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	loop.rewireLoopGuard(fn.Sdom(), guardCond)
 }
 
-func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
-	defUses := make(map[*Value][]*Block)
+type loopDep struct {
+	val  *Value // use value
+	idx  int    // index of use value if it's a Phi, otherwise -1
+	ctrl *Block // block control values uses loop def
+}
+
+func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]loopDep, bool) {
+	defUses := make(map[*Value][]loopDep, 0)
 	bad := make(map[*Value]bool)
 	sdom := fn.Sdom()
 
 	for _, val := range loop.header.Values {
 		if val.Op == OpPhi {
-			defUses[val] = make([]*Block, 0, val.Uses)
+			defUses[val] = make([]loopDep, 0, val.Uses)
 		} else {
 			bad[val] = true
 		}
@@ -432,13 +439,28 @@ func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
 			for idx, arg := range val.Args {
 				if _, exist := defUses[arg]; exist {
 					if sdom.IsAncestorEq(loop.exit, block) {
-						defUses[arg] = append(defUses[arg], val.Block)
+						defUses[arg] = append(defUses[arg], loopDep{val, -1, nil})
 					} else if val.Op == OpPhi && sdom.IsAncestorEq(loop.exit, block.Preds[idx].b) {
-						defUses[arg] = append(defUses[arg], val.Block)
+						defUses[arg] = append(defUses[arg], loopDep{val, idx, nil})
 					} else {
 						if !sdom.IsAncestorEq(loop.header, block) {
-							panic("must be used in loop")
+							return nil, true
 						}
+						// found := false
+						// for _, exit := range loop.exits {
+						// 	// if sdom.IsAncestorEq(exit, block) {
+						// 	// 	found = true
+						// 	// 	break
+						// 	// }
+						// 	if sdom.IsAncestorEq(block, exit) {
+						// 		found = true
+						// 		break
+						// 	}
+						// }
+						// if !found {
+						// 	return nil, true
+						// }
+						//panic("must be used in loop")
 					}
 				} else if _, exist := bad[arg]; exist {
 					// Use value other than Phi? We are incapable of handling
@@ -450,7 +472,7 @@ func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
 		if sdom.IsAncestorEq(loop.exit, block) {
 			for _, ctrl := range block.ControlValues() {
 				if _, exist := defUses[ctrl]; exist {
-					defUses[ctrl] = append(defUses[ctrl], block)
+					defUses[ctrl] = append(defUses[ctrl], loopDep{nil, -1, block})
 				} else if _, exist := bad[ctrl]; exist {
 					// Use value other than Phi? We are incapable of handling
 					// this case, so we bail out
@@ -462,9 +484,26 @@ func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]*Block, bool) {
 	return defUses, false
 }
 
-func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]*Block) {
-	sdom := fn.Sdom()
+func allocMergePhi(fn *Func, loopDef *Value, loopGuard *Block) *Value {
+	phi := fn.newValueNoBlock(OpPhi, loopDef.Type, loopDef.Pos)
+	if len(loopDef.Block.Preds) != 2 {
+		panic("loop header must be 2 pred ")
+	}
+	var phiArgs [2]*Value
+	// loopExit <- loopLatch(0), loopGuard(1)
+	for k := 0; k < len(loopDef.Block.Preds); k++ {
+		// argument block of use must dominate loopGuard
+		if fn.Sdom().IsAncestorEq(loopDef.Block.Preds[k].b, loopGuard) {
+			phiArgs[1] = loopDef.Args[k]
+		} else {
+			phiArgs[0] = loopDef.Args[k]
+		}
+	}
+	phi.AddArgs(phiArgs[:]...)
+	return phi
+}
 
+func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]loopDep) {
 	// Sort defUses so that we have consistent results for multiple compilations.
 	loopDefs := make([]*Value, 0)
 	for k, _ := range defUses {
@@ -475,31 +514,50 @@ func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]*Block) {
 	})
 
 	for _, loopDef := range loopDefs {
-		useBlock := defUses[loopDef]
+		loopDeps := defUses[loopDef]
 		// No use? Good, nothing to do
-		if len(useBlock) == 0 {
+		if len(loopDeps) == 0 {
 			continue
 		}
 
-		phi := fn.newValueNoBlock(OpPhi, loopDef.Type, loopDef.Pos)
-		if len(loopDef.Block.Preds) != 2 {
-			panic("loop header must be 2 pred ")
-		}
-		var phiArgs [2]*Value
-		// loopExit <- loopLatch(0), loopGuard(1)
-		for k := 0; k < len(loopDef.Block.Preds); k++ {
-			// argument block of use must dominate loopGuard
-			if sdom.IsAncestorEq(loopDef.Block.Preds[k].b, loop.guard) {
-				phiArgs[1] = loopDef.Args[k]
+		phi := allocMergePhi(fn, loopDef, loop.guard)
+		for _, loopDep := range loopDeps {
+			useValue := loopDep.val
+			if useValue != nil {
+				if loopDep.idx == -1 {
+					for idx, arg := range useValue.Args {
+						if arg == loopDef {
+							useValue.SetArg(idx, phi)
+						}
+					}
+				} else {
+					if useValue.Op != OpPhi {
+						panic("must be phi")
+					}
+					useValue.SetArg(loopDep.idx, phi)
+				}
+				fmt.Printf("Replace loop def %v with new %v in %v\n",
+					loopDef, phi, loopDep.val)
 			} else {
-				phiArgs[0] = loopDef.Args[k]
+				// block ctrl values relies on loop def
+				useBlock := loopDep.ctrl
+				for i, v := range useBlock.ControlValues() {
+					if v == loopDef {
+						useBlock.ReplaceControl(i, phi)
+						fmt.Printf("Replace loop def %v with new %v in block ctrl %v\n",
+							loopDef, phi, loopDep.ctrl)
+					}
+				}
 			}
 		}
-		phi.AddArgs(phiArgs[:]...)
-		for _, block := range useBlock {
-			block.replaceUses(loopDef, phi)
-		}
-		loop.exit.placeValue(phi) // move phi into block after replaceUses
+		loop.exit.placeValue(phi) // move phi into block after replacement
+	}
+}
+
+func (loop *loop) verifyRotatedForm() {
+	if len(loop.header.Succs) != 1 || len(loop.exit.Preds) != 2 ||
+		len(loop.latch.Succs) != 2 || len(loop.guard.Succs) != 2 {
+		panic("Bad shape after rotation")
 	}
 }
 

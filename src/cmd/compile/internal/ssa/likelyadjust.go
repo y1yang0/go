@@ -236,21 +236,35 @@ func likelyadjust(f *Func) {
 }
 
 func (l *loop) String() string {
-	return fmt.Sprintf("hdr:%s", l.header)
+	return fmt.Sprintf("Loop@%s", l.header)
 }
 
-func (l *loop) LongString() string {
-	i := ""
-	o := ""
-	if l.isInner {
-		i = ", INNER"
+func (loop *loop) LongString() string {
+	// Loop: loop header
+	// B: loop body
+	// E: loop exit
+	// L: loop latch
+	// G: loop guard
+	//
+	// * denotes main loop exit
+	if len(loop.exits) == 1 {
+		return fmt.Sprintf("Loop@%v(B@%v E@%v L@%v G@%v)",
+			loop.header, loop.body, loop.exit, loop.latch, loop.guard)
+	} else {
+		s := ""
+		for i, exit := range loop.exits {
+			s += exit.String()
+			if exit == loop.exit {
+				s += "*"
+			}
+			if i != len(loop.exits)-1 {
+				s += " "
+			}
+		}
+		return fmt.Sprintf("Loop@%v(B@%v E@(%v) L@%v G@%v)",
+			loop.header, loop.body, s, loop.latch, loop.guard)
 	}
-	if l.outer != nil {
-		o = ", o=" + l.outer.header.String()
-	}
-	return fmt.Sprintf("hdr:%s%s%s", l.header, i, o)
 }
-
 func (l *loop) isWithinOrEq(ll *loop) bool {
 	if ll == nil { // nil means whole program
 		return true
