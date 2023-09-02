@@ -54,7 +54,7 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 		for _, st := range stores {
 			loadPtr := val.Args[0]
 			storePtr := st.Args[0]
-			at := getMemoryAlias(loadPtr, storePtr)
+			at := GetMemoryAlias(loadPtr, storePtr)
 			fmt.Printf("%v == %v with %v in %v\n", at, loadPtr.LongString(), storePtr.LongString(), val.Block.Func.Name)
 			if at != NoAlias {
 				return false
@@ -68,7 +68,7 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 		for _, v := range append(stores, loads...) {
 			ptr := v.Args[0]
 			storePtr := val.Args[0]
-			at := getMemoryAlias(ptr, storePtr)
+			at := GetMemoryAlias(ptr, storePtr)
 			fmt.Printf("%v == %v with %v in %v\n", at, ptr.LongString(), storePtr.LongString(), val.Block.Func.Name)
 			if at != NoAlias {
 				return false
@@ -101,10 +101,16 @@ func (s *state) isExecuteUnconditionally(val *Value) bool {
 	return true
 }
 
-func hoist(block *Block, val *Value) {
+func (s *state) hoist(block *Block, val *Value) {
 	// rewire memory Phi input if any
-	for _, arg := range val.Args {
+	for idx, arg := range val.Args {
 		if arg.Type.IsMemory() {
+			for _, phiArg := range arg.Args {
+				if s.loopnest.sdom.IsAncestorEq(phiArg.Block, val.Block) {
+					val.SetArg(idx, phiArg)
+					break
+				}
+			}
 		}
 	}
 	for valIdx, v := range val.Block.Values {
@@ -153,13 +159,13 @@ func (s *state) tryHoist(val *Value) bool {
 		}
 	}
 
-	if val.Op == OpPhi || val.Op == OpInlMark{
+	if val.Op == OpPhi || val.Op == OpInlMark {
 		return false
 	}
 
 	if canSpeculativelyExecuteValue(val) {
 		entry := s.loopnest.sdom.Parent(loop.header)
-		hoist(entry, val)
+		s.hoist(entry, val)
 		s.hoisted[val] = true
 		return true
 	}

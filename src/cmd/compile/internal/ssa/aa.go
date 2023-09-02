@@ -9,6 +9,9 @@ import "fmt"
 // ----------------------------------------------------------------------------
 // Type-based Alias Anallysis
 //
+// Described in
+// Amer Diwan, Kathryn S. McKinley, J. Eliot B. Moss: Type-Based Alias Analysis. PLDI 1998
+//
 // TBAA relies on the fact that Golang is a type-safe language, i.e. different
 // pointer types cannot be converted to each other in Golang. Under this assumption,
 // TBAA attempts to identify whether two pointers may point to same memory based
@@ -54,7 +57,7 @@ func addressTaken(f *Func, a *Value) bool {
 }
 
 // getMemoryAlias check if two pointers may point to the same memory location.
-func getMemoryAlias(a, b *Value) AliasType {
+func GetMemoryAlias(a, b *Value) AliasType {
 	// #1 p must aliases with p
 	if a == b {
 		return MustAlias
@@ -66,7 +69,7 @@ func getMemoryAlias(a, b *Value) AliasType {
 		if off1 == off2 {
 			ptr1 := a.Args[0]
 			ptr2 := b.Args[0]
-			return getMemoryAlias(ptr1, ptr2)
+			return GetMemoryAlias(ptr1, ptr2)
 		} else {
 			return NoAlias
 		}
@@ -109,7 +112,7 @@ func getMemoryAlias(a, b *Value) AliasType {
 
 	// #6 p[i] aliases with q[j] if p==q or
 	if a.Op == OpPtrIndex && b.Op == OpPtrIndex {
-		at := getMemoryAlias(a.Args[0], b.Args[0])
+		at := GetMemoryAlias(a.Args[0], b.Args[0])
 		if at == MustAlias || at == MayAlias {
 			// opt#6 p[c1] never aliases with p[c2] if c1 != c2
 			i1 := getArrayIndex(a)

@@ -61,7 +61,7 @@ import (
 //
 // Now loop header and loop body are executed unconditionally, this may changes
 // program semantics while original program executes them only if test is okay.
-// An additional loop guard is required to ensure this.
+// A so-called loop guard is inserted to ensure loop is executed at least once.
 //
 //	     entry
 //	       │
@@ -154,7 +154,6 @@ import (
 //	│	   │
 //	│      ▼
 //	└─► loop exit
-//
 func (loop *loop) buildLoopForm(fn *Func) string {
 	if loop.outer != nil {
 		// TODO: 太过严格，考虑放松？
@@ -537,16 +536,16 @@ func (loop *loop) verifyRotatedForm() {
 	}
 }
 
-func (loop*loop) IsRotatedForm() {
+func (loop *loop) IsRotatedForm() {
 	if loop.guard == nil {
 		return false
 	}
-		// TODO: IF DEBUG
-		loop.verifyRotatedForm()
+	// TODO: IF DEBUG
+	loop.verifyRotatedForm()
 	return true
 }
 
-func (loop *loop) CreateLoopLand(fn* Func) bool {
+func (loop *loop) CreateLoopLand(fn *Func) bool {
 	if !loop.IsRotatedForm() {
 		return false
 	}
@@ -557,7 +556,7 @@ func (loop *loop) CreateLoopLand(fn* Func) bool {
 	loop.land = loopLand
 
 	edgeFound := 0
-	for idx, succ:= range loopGuard {
+	for idx, succ := range loopGuard {
 		if succ.b == loopHeader {
 			succ.b = loopLand
 			succ.i = 0
@@ -566,7 +565,7 @@ func (loop *loop) CreateLoopLand(fn* Func) bool {
 			break
 		}
 	}
-	for idx, pred:= range loopHeader {
+	for idx, pred := range loopHeader {
 		if pred.b == loopGuard {
 			pred.b = loopLand
 			pred.i = 0
@@ -576,7 +575,7 @@ func (loop *loop) CreateLoopLand(fn* Func) bool {
 		}
 	}
 
-	if edgeFound !=2 {
+	if edgeFound != 2 {
 		panic("edges are not found between header and guard after rotation")
 	}
 	return true
