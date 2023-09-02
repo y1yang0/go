@@ -118,6 +118,43 @@ import (
 //     * Update cond to use updated Phi as arguments.
 //     * Merge any uses outside loop as loop header may not dominate them anymore.
 //     This relies on the value collected in the first step.
+//
+// One of the main purposes of Loop Rotation is to assist other optimizations
+// such as LICM. They may require that the rotated loop has a proper while safe
+// block to place new Values, an additional loop land block is hereby created to
+// give these optimizations a chance to keep them from being homeless.
+//
+//	     entry
+//	       │
+//	       │
+//	       │
+//	       ▼
+//	┌───loop guard
+//	│      │
+//	│      │
+//	│      ▼
+//	|  loop land <= safe land to place Values
+//	│      │
+//	│      │
+//	│      ▼
+//	│  loop header◄──┐
+//	│      │         │
+//	│      │         │
+//	│      │         │
+//	│      ▼         │
+//	│  loop body     │
+//	│      │         │
+//	│      │         │
+//	│      │         │
+//	│      ▼         │
+//	│  loop latch────┘
+//	│      │
+//	│      │
+//	│      │
+//	│	   │
+//	│      ▼
+//	└─► loop exit
+//
 func (loop *loop) buildLoopForm(fn *Func) string {
 	if loop.outer != nil {
 		// TODO: 太过严格，考虑放松？
@@ -509,37 +546,6 @@ func (loop*loop) IsRotatedForm() {
 	return true
 }
 
-//	     entry
-//	       │
-//	       │
-//	       │
-//	       ▼
-//	┌───loop guard
-//	│      │
-//	│      │
-//	│      ▼
-//	|  loop land <= safe land to place Values
-//	│      │
-//	│      │
-//	│      ▼
-//	│  loop header◄──┐
-//	│      │         │
-//	│      │         │
-//	│      │         │
-//	│      ▼         │
-//	│  loop body     │
-//	│      │         │
-//	│      │         │
-//	│      │         │
-//	│      ▼         │
-//	│  loop latch────┘
-//	│      │
-//	│      │
-//	│      │
-//	│	   │
-//	│      ▼
-//	└─► loop exit
-//
 func (loop *loop) CreateLoopLand(fn* Func) bool {
 	if !loop.IsRotatedForm() {
 		return false

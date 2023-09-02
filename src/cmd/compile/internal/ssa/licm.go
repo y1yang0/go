@@ -101,11 +101,7 @@ func (s *state) isExecuteUnconditionally(val *Value) bool {
 	return true
 }
 
-func hoist(loopnest *loopnest, loop *loop, val *Value) {
-	if !loop.CreateLoopLand(loopnest.f) {
-		return
-	}
-
+func hoist(block *Block, val *Value) {
 	// rewire memory Phi input if any
 	for _, arg := range val.Args {
 		if arg.Type.IsMemory() {
@@ -115,11 +111,10 @@ func hoist(loopnest *loopnest, loop *loop, val *Value) {
 		if val != v {
 			continue
 		}
-		domBlock := loopnest.sdom.Parent(loop.header)
 		// if block.Func.pass.debug >= 1 {
-		printInvariant(val, val.Block, domBlock)
+		printInvariant(val, val.Block, block)
 		// }
-		val.moveTo(domBlock, valIdx)
+		val.moveTo(block, valIdx)
 		break
 	}
 }
@@ -163,7 +158,8 @@ func (s *state) tryHoist(val *Value) bool {
 	}
 
 	if canSpeculativelyExecuteValue(val) {
-		hoist(s.loopnest, s.loop, val)
+		entry := s.loopnest.sdom.Parent(loop.header)
+		hoist(entry, val)
 		s.hoisted[val] = true
 		return true
 	}
@@ -185,13 +181,17 @@ func (s *state) tryHoist(val *Value) bool {
 
 	// Instructions are located in rotatable loop?
 	fmt.Printf("==can not speculate%v\n", val.LongString())
-	if !s.loopnest.f.rotateLoop(s.loop) {
+	if !s.loopnest.f.RotateLoop(s.loop) {
 		fmt.Printf("==can not rotate%v\n", s.loop.LongString())
+		return false
+	}
+	if !loop.CreateLoopLand(loopnest.f) {
+		fmt.Printf("==can not create safe land")
 		return false
 	}
 
 	fmt.Printf("==hoist2\n")
-	hoist(s.loopnest, s.loop, val)
+	hoist(s.loop.land, val)
 	s.hoisted[val] = true
 	return true
 }
