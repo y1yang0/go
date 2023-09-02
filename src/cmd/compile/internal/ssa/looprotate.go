@@ -200,13 +200,8 @@ func (loop *loop) buildLoopForm(fn *Func) string {
 				return "loop exit is not dominated by header"
 			}
 			if len(exit.Succs) != 0 {
-				return "bad exit"
+				return "loop exit must end cfg"
 			}
-			// for _,val:= range exit.Values {
-			// 	if val.Op != OpPanicBounds && val.Op != OpPanicExtend {
-			// 		return "loop exit more than one."
-			// 	}
-			// }
 		}
 	}
 
@@ -426,6 +421,7 @@ type loopDep struct {
 	ctrl *Block // block control values uses loop def
 }
 
+// 33064/36000 rotatable/un-rotatable before lower
 func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]loopDep, bool) {
 	defUses := make(map[*Value][]loopDep, 0)
 	bad := make(map[*Value]bool)
@@ -452,21 +448,6 @@ func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]loopDep, bool) {
 						if !sdom.IsAncestorEq(loop.header, block) {
 							return nil, true
 						}
-						// found := false
-						// for _, exit := range loop.exits {
-						// 	// if sdom.IsAncestorEq(exit, block) {
-						// 	// 	found = true
-						// 	// 	break
-						// 	// }
-						// 	if sdom.IsAncestorEq(block, exit) {
-						// 		found = true
-						// 		break
-						// 	}
-						// }
-						// if !found {
-						// 	return nil, true
-						// }
-						//panic("must be used in loop")
 					}
 				} else if _, exist := bad[arg]; exist {
 					// Use value other than Phi? We are incapable of handling

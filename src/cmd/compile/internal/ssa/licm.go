@@ -87,6 +87,14 @@ func (s *state) isExecuteUnconditionally(val *Value) bool {
 	sdom := s.loopnest.sdom
 	for _, exit := range s.loop.exits {
 		if !sdom.IsAncestorEq(block, exit) {
+			// fmt.Printf("==unc %v", exit.LongString())
+			// pred := exit.Preds[0].b
+			// if len(pred.ControlValues())>0 {
+			// 	ct := pred.ControlValues()[0]
+			// 	if s.invariants[ct] {
+			// 		fmt.Printf("==inv %v", ct)
+			// 	}
+			// }
 			return false
 		}
 	}
@@ -113,10 +121,14 @@ func hoist(loopnest *loopnest, loop *loop, val *Value) {
 // to dominator block of loop, the first rule actually already implies the second rule
 func (s *state) tryHoist(val *Value) bool {
 	s.hoisted[val] = false
+
 	// arguments of val are all loop invariant, but they are not necessarily
 	// hoistable due to various constraints, for example, memory alias, so
 	// we try to hoist its arguments first
 	for _, arg := range val.Args {
+		if arg.Type.IsMemory() {
+			continue
+		}
 		if _, exist := s.invariants[arg]; !exist {
 			// must be type of memory or defiend outside loop
 			if !arg.Type.IsMemory() && !s.loopnest.sdom.IsAncestorEq(arg.Block, s.loop.header) {
@@ -137,6 +149,10 @@ func (s *state) tryHoist(val *Value) bool {
 		}
 	}
 
+	if val.Op == OpPhi || val.Op == OpInlMark{
+		return false
+	}
+
 	if canSpeculativelyExecuteValue(val) {
 		hoist(s.loopnest, s.loop, val)
 		s.hoisted[val] = true
@@ -153,7 +169,7 @@ func (s *state) tryHoist(val *Value) bool {
 	}
 
 	// Instructions access different memory locations?
-	if !s.hasMemoryAlias(val) {
+	if s.hasMemoryAlias(val) {
 		fmt.Printf("==has mem alias%v\n", val)
 		return false
 	}
@@ -161,7 +177,7 @@ func (s *state) tryHoist(val *Value) bool {
 	// Instructions are located in rotatable loop?
 	fmt.Printf("==can not speculate%v\n", val.LongString())
 	if !s.loopnest.f.rotateLoop(s.loop) {
-		fmt.Printf("==can not rotate%v\n", s.loop.FullString())
+		fmt.Printf("==can not rotate%v\n", s.loop.LongString())
 		return false
 	}
 
@@ -244,7 +260,7 @@ func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 // licm stands for loop invariant code motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
-	// if f.Name != "(*itabTableType).find" {
+	// if f.Name != "goenvs_unix" {
 	// 	return
 	// }
 	loopnest := f.loopnest()
