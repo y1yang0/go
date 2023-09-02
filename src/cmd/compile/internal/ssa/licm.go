@@ -164,7 +164,7 @@ func (s *state) tryHoist(val *Value) bool {
 	}
 
 	if canSpeculativelyExecuteValue(val) {
-		entry := s.loopnest.sdom.Parent(loop.header)
+		entry := s.loopnest.sdom.Parent(s.loop.header)
 		s.hoist(entry, val)
 		s.hoisted[val] = true
 		return true
@@ -191,13 +191,13 @@ func (s *state) tryHoist(val *Value) bool {
 		fmt.Printf("==can not rotate%v\n", s.loop.LongString())
 		return false
 	}
-	if !loop.CreateLoopLand(loopnest.f) {
+	if !s.loop.CreateLoopLand(s.loopnest.f) {
 		fmt.Printf("==can not create safe land")
 		return false
 	}
 
 	fmt.Printf("==hoist2\n")
-	hoist(s.loop.land, val)
+	s.hoist(s.loop.land, val)
 	s.hoisted[val] = true
 	return true
 }

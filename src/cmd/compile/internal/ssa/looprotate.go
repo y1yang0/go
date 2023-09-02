@@ -536,12 +536,10 @@ func (loop *loop) verifyRotatedForm() {
 	}
 }
 
-func (loop *loop) IsRotatedForm() {
+func (loop *loop) IsRotatedForm() bool {
 	if loop.guard == nil {
 		return false
 	}
-	// TODO: IF DEBUG
-	loop.verifyRotatedForm()
 	return true
 }
 
@@ -549,35 +547,39 @@ func (loop *loop) CreateLoopLand(fn *Func) bool {
 	if !loop.IsRotatedForm() {
 		return false
 	}
+	// TODO: IF DEBUG
+	loop.verifyRotatedForm()
 
 	loopGuard := loop.guard
 	loopHeader := loop.header
-	loopLand := fn.NewBlock(BlockIf)
+	loopLand := fn.NewBlock(BlockPlain)
 	loop.land = loopLand
 
 	edgeFound := 0
-	for idx, succ := range loopGuard {
+	for i := 0; i < len(loopGuard.Succs); i++ {
+		succ := &loopGuard.Succs[i]
 		if succ.b == loopHeader {
 			succ.b = loopLand
 			succ.i = 0
-			loopLand.Preds = append(loopLand.Preds, Edge{loopGuard, idx})
+			loopLand.Preds = append(loopLand.Preds, Edge{loopGuard, i})
 			edgeFound++
 			break
 		}
 	}
-	for idx, pred := range loopHeader {
+	for i := 0; i < len(loopHeader.Preds); i++ {
+		pred := &loopHeader.Preds[i]
 		if pred.b == loopGuard {
 			pred.b = loopLand
 			pred.i = 0
-			loopLand.Succs = appead(loopLand.Succs, Edge{loopHeader, idx})
+			loopLand.Succs = append(loopLand.Succs, Edge{loopHeader, i})
 			edgeFound++
 			break
 		}
 	}
-
 	if edgeFound != 2 {
 		panic("edges are not found between header and guard after rotation")
 	}
+
 	return true
 }
 
