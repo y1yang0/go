@@ -102,6 +102,15 @@ func (s *state) isExecuteUnconditionally(val *Value) bool {
 }
 
 func hoist(loopnest *loopnest, loop *loop, val *Value) {
+	if !loop.CreateLoopLand(loopnest.f) {
+		return
+	}
+
+	// rewire memory Phi input if any
+	for _, arg := range val.Args {
+		if arg.Type.IsMemory() {
+		}
+	}
 	for valIdx, v := range val.Block.Values {
 		if val != v {
 			continue
@@ -260,9 +269,9 @@ func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 // licm stands for loop invariant code motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
-	// if f.Name != "goenvs_unix" {
-	// 	return
-	// }
+	if f.Name != "(*AsmBuf).PutOpBytesLit" {
+		return
+	}
 	loopnest := f.loopnest()
 	if loopnest.hasIrreducible {
 		return

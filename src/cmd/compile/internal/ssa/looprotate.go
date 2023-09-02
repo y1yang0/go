@@ -118,54 +118,6 @@ import (
 //     * Update cond to use updated Phi as arguments.
 //     * Merge any uses outside loop as loop header may not dominate them anymore.
 //     This relies on the value collected in the first step.
-
-// TODO: 插入必要的assert
-// TODO: 新增测试用例
-// TODO: 压力测试，在每个pass之后都执行loop rotate；执行多次loop rotate；打开ssacheck；确保无bug
-// TODO: 尽可能放松buildLoopForm限制
-func (fn *Func) rotateLoop(loop *loop) bool {
-	// if fn.Name != "value" {
-	// 	return false
-	// }
-
-	// Try to build loop form and bail out if failure
-	if msg := loop.buildLoopForm(fn); msg != "" {
-		fmt.Printf("Bad %v for rotation: %s %v\n", loop.LongString(), msg, fn.Name)
-		return false
-	}
-
-	// Collect all use blocks that depend on Value defined inside loop
-	defUses, bailout := loop.collectLoopUse(fn)
-	if bailout {
-		fmt.Printf("Bad %v for rotation: use bad %v\n", loop.LongString(), fn.Name)
-		return false
-	}
-
-	// Move conditional test from loop header to loop latch
-	cond := loop.moveCond()
-
-	// Rewire loop header to loop body unconditionally
-	loop.rewireLoopHeader()
-
-	// Rewire loop latch to header and exit based on new conditional test
-	loop.rewireLoopLatch(cond)
-
-	// Create new loop guard block and wire it to appropriate blocks
-	loop.createLoopGuard(fn, cond)
-
-	// Update cond to use updated Phi as arguments
-	loop.updateCond(cond)
-
-	// Merge any uses outside loop as loop header doesnt dominate them anymore
-	loop.mergeLoopUse(fn, defUses)
-
-	// Gosh, loop is rotated
-	loop.verifyRotatedForm()
-
-	fmt.Printf("Loop Rotation %v in %v\n", loop.LongString(), fn.Name)
-	return true
-}
-
 func (loop *loop) buildLoopForm(fn *Func) string {
 	if loop.outer != nil {
 		// TODO: 太过严格，考虑放松？
@@ -546,6 +498,129 @@ func (loop *loop) verifyRotatedForm() {
 		len(loop.latch.Succs) != 2 || len(loop.guard.Succs) != 2 {
 		panic("Bad shape after rotation")
 	}
+}
+
+func (loop*loop) IsRotatedForm() {
+	if loop.guard == nil {
+		return false
+	}
+		// TODO: IF DEBUG
+		loop.verifyRotatedForm()
+	return true
+}
+
+//	     entry
+//	       │
+//	       │
+//	       │
+//	       ▼
+//	┌───loop guard
+//	│      │
+//	│      │
+//	│      ▼
+//	|  loop land <= safe land to place Values
+//	│      │
+//	│      │
+//	│      ▼
+//	│  loop header◄──┐
+//	│      │         │
+//	│      │         │
+//	│      │         │
+//	│      ▼         │
+//	│  loop body     │
+//	│      │         │
+//	│      │         │
+//	│      │         │
+//	│      ▼         │
+//	│  loop latch────┘
+//	│      │
+//	│      │
+//	│      │
+//	│	   │
+//	│      ▼
+//	└─► loop exit
+//
+func (loop *loop) CreateLoopLand(fn* Func) bool {
+	if !loop.IsRotatedForm() {
+		return false
+	}
+
+	loopGuard := loop.guard
+	loopHeader := loop.header
+	loopLand := fn.NewBlock(BlockIf)
+	loop.land = loopLand
+
+	edgeFound := 0
+	for idx, succ:= range loopGuard {
+		if succ.b == loopHeader {
+			succ.b = loopLand
+			succ.i = 0
+			loopLand.Preds = append(loopLand.Preds, Edge{loopGuard, idx})
+			edgeFound++
+			break
+		}
+	}
+	for idx, pred:= range loopHeader {
+		if pred.b == loopGuard {
+			pred.b = loopLand
+			pred.i = 0
+			loopLand.Succs = appead(loopLand.Succs, Edge{loopHeader, idx})
+			edgeFound++
+			break
+		}
+	}
+
+	if edgeFound !=2 {
+		panic("edges are not found between header and guard after rotation")
+	}
+	return true
+}
+
+// TODO: 插入必要的assert
+// TODO: 新增测试用例
+// TODO: 压力测试，在每个pass之后都执行loop rotate；执行多次loop rotate；打开ssacheck；确保无bug
+// TODO: 尽可能放松buildLoopForm限制
+func (fn *Func) RotateLoop(loop *loop) bool {
+	// if fn.Name != "value" {
+	// 	return false
+	// }
+
+	// Try to build loop form and bail out if failure
+	if msg := loop.buildLoopForm(fn); msg != "" {
+		fmt.Printf("Bad %v for rotation: %s %v\n", loop.LongString(), msg, fn.Name)
+		return false
+	}
+
+	// Collect all use blocks that depend on Value defined inside loop
+	defUses, bailout := loop.collectLoopUse(fn)
+	if bailout {
+		fmt.Printf("Bad %v for rotation: use bad %v\n", loop.LongString(), fn.Name)
+		return false
+	}
+
+	// Move conditional test from loop header to loop latch
+	cond := loop.moveCond()
+
+	// Rewire loop header to loop body unconditionally
+	loop.rewireLoopHeader()
+
+	// Rewire loop latch to header and exit based on new conditional test
+	loop.rewireLoopLatch(cond)
+
+	// Create new loop guard block and wire it to appropriate blocks
+	loop.createLoopGuard(fn, cond)
+
+	// Update cond to use updated Phi as arguments
+	loop.updateCond(cond)
+
+	// Merge any uses outside loop as loop header doesnt dominate them anymore
+	loop.mergeLoopUse(fn, defUses)
+
+	// Gosh, loop is rotated
+	loop.verifyRotatedForm()
+
+	fmt.Printf("Loop Rotation %v in %v\n", loop.LongString(), fn.Name)
+	return true
 }
 
 // blockOrdering converts loops with a check-loop-condition-at-beginning

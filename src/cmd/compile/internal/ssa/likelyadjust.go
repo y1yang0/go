@@ -12,6 +12,7 @@ type loop struct {
 	exit   *Block // The unique exit block of this loop, if any
 	latch  *Block // Source of backedge, where increment happens
 	body   *Block // The first loop body, near to the header
+	land   *Block // Safe land block to place instructions after rotation
 	outer  *loop  // Outer loop containing this loop
 
 	// By default, children, exits, and depth are not initialized.
