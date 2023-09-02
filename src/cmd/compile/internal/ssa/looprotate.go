@@ -68,7 +68,7 @@ import (
 //	       │
 //	       │
 //	       ▼
-//	┌───loop guard
+//	┌──loop guard
 //	│      │
 //	│      │
 //	│      │
@@ -129,7 +129,7 @@ import (
 //	       │
 //	       │
 //	       ▼
-//	┌───loop guard
+//	┌──loop guard
 //	│      │
 //	│      │
 //	│      ▼
