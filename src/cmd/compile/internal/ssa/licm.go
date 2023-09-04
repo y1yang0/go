@@ -227,18 +227,18 @@ func (s *state) tryHoist(val *Value) bool {
 	// Hoist the loop-invariant panic check to loop land after rotation
 	// This simplifies CFG and allow more Value be hosited
 	//
-	//                                      (Rotated Form...)
-	//                                        bound check  <= loop land
-	//	   loop header                          |     ╲
-	//	     ╱   ▲   ╲                          │      ╲
-	//	    ╱     ╲   ╲                    loop header panic
-	// bound check ╲  loop exit    =>       ▲      │
-	//	  ╱   ╲    /                        │      │
-	//	 ╱     ╲  /                        loop latch
-	// panic   loop latch                       │
-	//                                          |
-	//                                        loop exit
-	//                                     (Rotated Form...)
+	//	                                    (Rotated Form...)
+	//	                                      bound check  <= loop land
+	//	     loop header                          |     ╲
+	//	       ╱   ▲   ╲                          │      ╲
+	//	      ╱     ╲   ╲                    loop header panic
+	//	  bound check╲ loop exit     =>       ▲      │
+	//	    ╱   ╲    ╱                        │      │
+	//	   ╱     ╲  ╱                        loop latch
+	//	panic   loop latch                       │
+	//	                                         |
+	//	                                      loop exit
+	//	                                   (Rotated Form...)
 	if val.Block.Kind == BlockIf {
 	OOO:
 		for _, succ := range val.Block.Succs {
@@ -251,8 +251,11 @@ func (s *state) tryHoist(val *Value) bool {
 							break
 						}
 					}
-					fmt.Printf("+++PANIC %v %v\n", len(succ.b.Values), isdom)
+					if !isdom {
+						panic("sanity check")
+					}
 
+					fmt.Printf("+++PANIC %v %v %v\n", v.LongString(), len(succ.b.Values), isdom)
 					break OOO
 				}
 			}
