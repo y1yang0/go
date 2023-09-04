@@ -223,7 +223,7 @@ func (s *state) tryHoist(val *Value) bool {
 		for _,succ:= range val.Block.Succs {
 			for _, v:= range succ.b.Values {
 				if v.Op == OpPanicBounds || v.Op == OpPanicExtend {
-					fmt.Printf("+++PANIC")
+					fmt.Printf("+++PANIC %v\n", len(succ.b.Values))
 					break OOO
 				}
 			}

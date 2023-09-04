@@ -114,7 +114,7 @@ func GetMemoryAlias(a, b *Value) AliasType {
 	if a.Op == OpPtrIndex && b.Op == OpPtrIndex {
 		at := GetMemoryAlias(a.Args[0], b.Args[0])
 		if at == MustAlias || at == MayAlias {
-			// opt#6 p[c1] never aliases with p[c2] if c1 != c2
+			// #6' p[c1] never aliases with p[c2] if c1 != c2
 			i1 := getArrayIndex(a)
 			if i1 != -1 {
 				i2 := getArrayIndex(b)
