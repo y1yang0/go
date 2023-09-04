@@ -17,8 +17,14 @@ import (
 // so that they are only executed once, instead of being repeatedly executed with
 // each iteration of the loop.
 //
-// Reference:
-// https://llvm.org/doxygen/LICM_8cpp_source.html
+// In the context of LICM, we can classify all Values into two categories: those
+// that can undergo speculative execution and those that cannot. Examples of the
+// former include simple arithmetic operations (except for division and modulo
+// which may trap execution due to / by zero), which can be freely hoisted to the
+// loop entry. However, for the latter category, there are several prerequisites.
+// To ensure program semantic correctness, Values must satisfy the following
+// conditions in order to hoist it:
+// TODO: TO WRITE
 
 const MaxLoopBlockSize = 8
 
@@ -126,15 +132,12 @@ func (s *state) hoist(block *Block, val *Value) {
 		if val != v {
 			continue
 		}
-		// if block.Func.pass.debug >= 1 {
-		printInvariant(val, val.Block, block)
-		// }
 		val.moveTo(block, valIdx)
 		break
 	}
 }
 
-func isPinned(val*Value) bool{	
+func isPinned(val*Value) bool{
 	switch val.Op {
 	case OpPhi,OpInlMark, OpVarDef, OpVarLive:
 		return true
@@ -187,13 +190,15 @@ func (s *state) tryHoist(val *Value) bool {
 		for _,arg := range val.Args {
 			if s.loop.guard != nil && !s.fn.Sdom().IsAncestorEq(arg.Block, s.loop.guard) {
 				s.hoist(s.loop.land, val)
+				fmt.Printf("==Hoist1 %v to %v\n", val.LongString(), s.loop.land)
 				s.hoisted[val] = true
 				return true
 			}
 		}
-		entry := s.loopnest.sdom.Parent(s.loop.header)
+		entry := s.fn.Sdom().Parent(s.loop.header)
 		s.hoist(entry, val)
 		s.hoisted[val] = true
+		fmt.Printf("==Hoist1 %v to %v\n", val.LongString(), entry)
 		return true
 	}
 
@@ -228,9 +233,9 @@ func (s *state) tryHoist(val *Value) bool {
 		return false
 	}
 
-	fmt.Printf("==hoist2\n")
 	// Hoist value to loop land
 	s.hoist(s.loop.land, val)
+	fmt.Printf("==Hoist2 %v to %v\n", val.LongString(), s.loop.land)
 	s.hoisted[val] = true
 	return true
 }
