@@ -72,7 +72,6 @@ import (
 //	│      │
 //	│      │
 //	│      │
-//	│      │
 //	│      ▼
 //	│  loop header◄──┐
 //	│      │         │
@@ -85,7 +84,6 @@ import (
 //	│      │         │
 //	│      ▼         │
 //	│  loop latch────┘
-//	│      │
 //	│      │
 //	│      │
 //	│	   │
@@ -132,8 +130,10 @@ import (
 //	┌──loop guard
 //	│      │
 //	│      │
+//	│      │
 //	│      ▼
-//	|  loop land <= safe land to place Values
+//	|  loop land  <= safe land to place Values
+//	│      │
 //	│      │
 //	│      │
 //	│      ▼
@@ -148,7 +148,6 @@ import (
 //	│      │         │
 //	│      ▼         │
 //	│  loop latch────┘
-//	│      │
 //	│      │
 //	│      │
 //	│	   │
