@@ -29,13 +29,20 @@ import (
 const MaxLoopBlockSize = 8
 
 type state struct {
-	fn *Func
+	fn         *Func
 	loopnest   *loopnest // the global loopnest
 	loop       *loop     // target loop to be optimized out
 	loads      []*Value
 	stores     []*Value
 	invariants map[*Value]bool
 	hoisted    map[*Value]bool
+}
+
+type loopInvariants struct {
+	loop       *loop
+	invariants map[*Value]bool
+	loads      []*Value
+	stores     []*Value
 }
 
 func printInvariant(val *Value, block *Block, domBlock *Block) {
@@ -83,7 +90,7 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 		}
 		return false
 	} else {
-	//	fmt.Printf("==TO IMPLEMENT:%v\n", val.LongString())
+		//	fmt.Printf("==TO IMPLEMENT:%v\n", val.LongString())
 	}
 	return false
 }
@@ -119,7 +126,7 @@ func (s *state) isExecuteUnconditionally(val *Value) bool {
 func (s *state) hoist(block *Block, val *Value) {
 	// rewire memory Phi input if needed
 	for idx, arg := range val.Args {
-		if arg.Type.IsMemory() && arg.Op == OpPhi{
+		if arg.Type.IsMemory() && arg.Op == OpPhi {
 			for _, phiArg := range arg.Args {
 				if s.fn.Sdom().IsAncestorEq(phiArg.Block, val.Block) {
 					val.SetArg(idx, phiArg)
@@ -138,9 +145,9 @@ func (s *state) hoist(block *Block, val *Value) {
 	}
 }
 
-func isHoistable(val*Value) bool{
+func isHoistable(val *Value) bool {
 	switch val.Op {
-	case OpPhi,OpInlMark, OpVarDef, OpVarLive, OpInvalid:
+	case OpPhi, OpInlMark, OpVarDef, OpVarLive, OpInvalid:
 		return false
 	}
 	return true
@@ -189,7 +196,7 @@ func (s *state) tryHoist(val *Value) bool {
 	if canSpeculativelyExecuteValue(val) {
 		// If arguments of value is hoisted to loop land, the value itself should
 		// be hoisted to loop land
-		for _,arg := range val.Args {
+		for _, arg := range val.Args {
 			if s.loop.guard != nil && !s.fn.Sdom().IsAncestorEq(arg.Block, s.loop.guard) {
 				s.hoist(s.loop.land, val)
 				fmt.Printf("==Hoist1 %v to %v\n", val.LongString(), s.loop.land)
@@ -217,13 +224,32 @@ func (s *state) tryHoist(val *Value) bool {
 		fmt.Printf("==can not rotate%v\n", s.loop.LongString())
 		return false
 	}
-
+	// Hoist the loop-invariant panic check to loop land after rotation
+	// This simplifies CFG and allow more Value be hosited
+	//                                    (Rotated form...)
+	//	   loop header                         is bound <= loop land
+	//	     /   ▲   \                          |     \
+	//	    /     \   \                    loop header \
+	//	is bound   \  loop exit   =>        ▲      |   panic
+	//	  /   \    /                        |      |
+	//	 /     \  /                        loop latch
+	//  panic  loop latch                       |
+	//                                        loop exit
+	//                                    (Rotated form...)
 	if val.Block.Kind == BlockIf {
-		OOO:
-		for _,succ:= range val.Block.Succs {
-			for _, v:= range succ.b.Values {
+	OOO:
+		for _, succ := range val.Block.Succs {
+			for _, v := range succ.b.Values {
 				if v.Op == OpPanicBounds || v.Op == OpPanicExtend {
-					fmt.Printf("+++PANIC %v\n", len(succ.b.Values))
+					isdom := false
+					for _, parg := range v.Args {
+						if !s.fn.Sdom().IsAncestorEq(parg.Block, s.loop.guard) {
+							isdom = true
+							break
+						}
+					}
+					fmt.Printf("+++PANIC %v %v\n", len(succ.b.Values), isdom)
+
 					break OOO
 				}
 			}
@@ -344,11 +370,11 @@ func licm(f *Func) {
 		// try to hoist loop invariant outside the loop
 		loopnest.assembleChildren() // initialize loop children
 		loopnest.findExits()        // initialize loop exits
-		s := &state{loopnest: loopnest, loop: loop, fn:f}
+		s := &state{loopnest: loopnest, loop: loop, fn: f}
 		invariants := s.markInvariant(loopBlocks)
 
 		if invariants != nil && len(invariants) > 0 {
-			fmt.Printf("==invariants%v %v in %v\n", loop.header,invariants, f.Name)
+			fmt.Printf("==invariants%v %v in %v\n", loop.header, invariants, f.Name)
 			s.invariants = invariants
 			s.hoisted = make(map[*Value]bool)
 
