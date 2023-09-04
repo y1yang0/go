@@ -225,7 +225,6 @@ func (loop *loop) moveCond() *Value {
 }
 
 // Update uses of conditional test once guardCond is derived from it
-// TODO: Maybe mergeLoopUse already covers this?
 func (loop *loop) updateCond(cond *Value) {
 	// In original while/for loop, a critical edge is inserted at the end of each
 	// iteration, and Phi values are updated. All subsequent uses of Phi rely on
@@ -308,6 +307,15 @@ func (loop *loop) rewireLoopLatch(ctrl *Value) {
 	loopExit.Preds[idx] = Edge{loopLatch, 1}
 }
 
+// rewireLoopEntry rewires the loop CFG to the following shape:
+//
+//	loopEntry -> loopGuard
+func (loop *loop) rewireLoopEntry(sdom SparseTree, loopGuard *Block) {
+	entry := sdom.Parent(loop.header)
+	entry.Succs = entry.Succs[:0]
+	entry.AddEdgeTo(loopGuard)
+}
+
 // rewireLoopGuard rewires the loop CFG to the following shape:
 //
 //	loopGuard -> loopHeader(0), loopExit(1)
@@ -316,7 +324,8 @@ func (loop *loop) rewireLoopGuard(sdom SparseTree, guardCond *Value) {
 	loopGuard := loop.guard
 	entry := sdom.Parent(loopHeader)
 
-	loopGuard.Likely = BranchLikely // loop is prefer to be executed at least once
+	loopGuard.Pos = loopHeader.Pos
+	loopGuard.Likely = loopHeader.Likely // respect header's branch predication
 	loopGuard.SetControl(guardCond)
 	var idx int
 	for i := 0; i < len(loopHeader.Preds); i++ {
@@ -330,23 +339,14 @@ func (loop *loop) rewireLoopGuard(sdom SparseTree, guardCond *Value) {
 	loopHeader.Preds[idx] = Edge{loopGuard, 0}
 }
 
-// rewireLoopEntry rewires the loop CFG to the following shape:
-//
-//	loopEntry -> loopGuard
-func (loop *loop) rewireLoopEntry(sdom SparseTree, loopGuard *Block) {
-	entry := sdom.Parent(loop.header)
-	entry.Succs = entry.Succs[:0]
-	entry.AddEdgeTo(loopGuard)
-}
-
 // createLoopGuard creates loop guard and wires loop CFG to the following shape:
 //
 //	loopEntry -> loopGuard
 //	loopGuard -> loopHeader(0), loopExit(1)
 func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	// Create loop guard block
-	// TODO: 现在新插入的loop guard位于最后一个block，放到loop header之前更好
-	// we may use it later(in mergeLoopUse)
+	// TODO: Loop guard can be skipped if original loop form already exists such
+	// form. e.g. if 0 < len(b) { for i := 0; i < len(b); i++ {...} }
 	loopGuard := fn.NewBlock(BlockIf)
 	loop.guard = loopGuard
 	sdom := fn.Sdom()
@@ -355,12 +355,6 @@ func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	loop.rewireLoopEntry(sdom, loopGuard)
 
 	// Create conditional test for loop guard based on existing conditional test
-	// TODO: 如果已经存在类似loop guard的结构，就无须插入，比如用户已经这么写了：
-	//  if len(b) >0 {
-	//		for i:=0; i<len(b); i++ {...}
-	//  }
-	//  这种情况下，我们就不应该插入loop guard
-	// TODO: 更新一下新cond的aux信息，比如变量名字，方便debug
 	var guardCond *Value
 	if cond.Op != OpPhi {
 		// Normal case, clone conditional test
@@ -458,25 +452,6 @@ func (loop *loop) collectLoopUse(fn *Func) (map[*Value][]loopDep, bool) {
 	return defUses, false
 }
 
-func allocMergePhi(fn *Func, loopDef *Value, loopGuard *Block) *Value {
-	phi := fn.newValueNoBlock(OpPhi, loopDef.Type, loopDef.Pos)
-	if len(loopDef.Block.Preds) != 2 {
-		panic("loop header must be 2 pred ")
-	}
-	var phiArgs [2]*Value
-	// loopExit <- loopLatch(0), loopGuard(1)
-	for k := 0; k < len(loopDef.Block.Preds); k++ {
-		// argument block of use must dominate loopGuard
-		if fn.Sdom().IsAncestorEq(loopDef.Block.Preds[k].b, loopGuard) {
-			phiArgs[1] = loopDef.Args[k]
-		} else {
-			phiArgs[0] = loopDef.Args[k]
-		}
-	}
-	phi.AddArgs(phiArgs[:]...)
-	return phi
-}
-
 func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]loopDep) {
 	// Sort defUses so that we have consistent results for multiple compilations.
 	loopDefs := make([]*Value, 0)
@@ -494,7 +469,24 @@ func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]loopDep) {
 			continue
 		}
 
-		phi := allocMergePhi(fn, loopDef, loop.guard)
+		// Allocate merge phi
+		phi := fn.newValueNoBlock(OpPhi, loopDef.Type, loopDef.Pos)
+		if len(loopDef.Block.Preds) != 2 {
+			panic("loop header must be 2 pred ")
+		}
+		var phiArgs [2]*Value
+		// loopExit <- loopLatch(0), loopGuard(1)
+		for k := 0; k < len(loopDef.Block.Preds); k++ {
+			// argument block of use must dominate loopGuard
+			if fn.Sdom().IsAncestorEq(loopDef.Block.Preds[k].b, loop.guard) {
+				phiArgs[1] = loopDef.Args[k]
+			} else {
+				phiArgs[0] = loopDef.Args[k]
+			}
+		}
+		phi.AddArgs(phiArgs[:]...)
+
+		// Replace old use with new merge phi
 		for _, loopDep := range loopDeps {
 			useValue := loopDep.val
 			if useValue != nil {
@@ -510,16 +502,20 @@ func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]loopDep) {
 					}
 					useValue.SetArg(loopDep.idx, phi)
 				}
-				fmt.Printf("Replace loop def %v with new %v in %v\n",
-					loopDef, phi, loopDep.val)
+				if fn.pass.debug >2 {
+					fmt.Printf("Replace loop def %v with new %v in %v(%b)\n",
+						loopDef, phi, useValue, useValue.Block)
+				}
 			} else {
 				// block ctrl values relies on loop def
 				useBlock := loopDep.ctrl
 				for i, v := range useBlock.ControlValues() {
 					if v == loopDef {
 						useBlock.ReplaceControl(i, phi)
-						fmt.Printf("Replace loop def %v with new %v in block ctrl %v\n",
+						if fn.pass.debug >2 {
+							fmt.Printf("Replace loop def %v with new %v in block ctrl %v\n",
 							loopDef, phi, loopDep.ctrl)
+						}
 					}
 				}
 			}
@@ -535,6 +531,7 @@ func (loop *loop) verifyRotatedForm() {
 	}
 }
 
+// IsRotatedForm returns true if loop is rotated
 func (loop *loop) IsRotatedForm() bool {
 	if loop.guard == nil {
 		return false
@@ -542,6 +539,8 @@ func (loop *loop) IsRotatedForm() bool {
 	return true
 }
 
+// CreateLoopLand creates a land block between loop guard and loop header, it
+// executes only if entering loop
 func (loop *loop) CreateLoopLand(fn *Func) bool {
 	if !loop.IsRotatedForm() {
 		return false
@@ -552,6 +551,7 @@ func (loop *loop) CreateLoopLand(fn *Func) bool {
 	loopGuard := loop.guard
 	loopHeader := loop.header
 	loopLand := fn.NewBlock(BlockPlain)
+	loopLand.Pos = loopHeader.Pos
 	loop.land = loopLand
 
 	edgeFound := 0
@@ -582,12 +582,10 @@ func (loop *loop) CreateLoopLand(fn *Func) bool {
 	return true
 }
 
-// TODO: 插入必要的assert
 // TODO: 新增测试用例
 // TODO: 压力测试，在每个pass之后都执行loop rotate；执行多次loop rotate；打开ssacheck；确保无bug
-// TODO: 尽可能放松buildLoopForm限制
 func (fn *Func) RotateLoop(loop *loop) bool {
-	// if fn.Name != "value" {
+	// if fn.Name != "whatthefuck" {
 	// 	return false
 	// }
 
@@ -625,6 +623,6 @@ func (fn *Func) RotateLoop(loop *loop) bool {
 	// Gosh, loop is rotated
 	loop.verifyRotatedForm()
 
-	fmt.Printf("Loop Rotation %v in %v\n", loop.LongString(), fn.Name)
+	fmt.Printf("%v rotated in %v\n", loop.LongString(), fn.Name)
 	return true
 }

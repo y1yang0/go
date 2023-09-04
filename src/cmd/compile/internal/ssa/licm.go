@@ -23,6 +23,7 @@ import (
 const MaxLoopBlockSize = 8
 
 type state struct {
+	fn *Func
 	loopnest   *loopnest // the global loopnest
 	loop       *loop     // target loop to be optimized out
 	loads      []*Value
@@ -32,8 +33,8 @@ type state struct {
 }
 
 func printInvariant(val *Value, block *Block, domBlock *Block) {
-	fmt.Printf("== Hoist %v(%v) from b%v to b%v in %v\n",
-		val.Op.String(), val.String(),
+	fmt.Printf("== Hoist %v from b%v to b%v in %v\n",
+		val.String(),
 		block.ID, domBlock.ID, block.Func.Name)
 	fmt.Printf("  %v\n", val.LongString())
 }
@@ -47,7 +48,7 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 	if val.Op == OpLoad {
 		if len(stores) == 0 {
 			// good, no other Store at all
-			return true
+			return false
 		}
 		// Slow path, we need a type-based alias analysis to know whether Load
 		// may alias with Stores
@@ -57,13 +58,13 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 			at := GetMemoryAlias(loadPtr, storePtr)
 			fmt.Printf("%v == %v with %v in %v\n", at, loadPtr.LongString(), storePtr.LongString(), val.Block.Func.Name)
 			if at != NoAlias {
-				return false
+				return true
 			}
 		}
-		return true
+		return false
 	} else if val.Op == OpStore {
 		if len(loads) == 0 && len(stores) == 1 /*itself only*/ {
-			return true
+			return false
 		}
 		for _, v := range append(stores, loads...) {
 			ptr := v.Args[0]
@@ -71,10 +72,12 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 			at := GetMemoryAlias(ptr, storePtr)
 			fmt.Printf("%v == %v with %v in %v\n", at, ptr.LongString(), storePtr.LongString(), val.Block.Func.Name)
 			if at != NoAlias {
-				return false
+				return true
 			}
 		}
-		return true
+		return false
+	} else {
+	//	fmt.Printf("==TO IMPLEMENT:%v\n", val.LongString())
 	}
 	return false
 }
@@ -84,8 +87,14 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 // conditional expressions.
 func (s *state) isExecuteUnconditionally(val *Value) bool {
 	block := val.Block
-	sdom := s.loopnest.sdom
+	sdom := s.fn.Sdom()
 	for _, exit := range s.loop.exits {
+		if exit == s.loop.exit {
+			if !sdom.IsAncestorEq(block, s.loop.latch) {
+				return false
+			}
+			continue
+		}
 		if !sdom.IsAncestorEq(block, exit) {
 			// fmt.Printf("==unc %v", exit.LongString())
 			// pred := exit.Preds[0].b
@@ -102,11 +111,11 @@ func (s *state) isExecuteUnconditionally(val *Value) bool {
 }
 
 func (s *state) hoist(block *Block, val *Value) {
-	// rewire memory Phi input if any
+	// rewire memory Phi input if needed
 	for idx, arg := range val.Args {
-		if arg.Type.IsMemory() {
+		if arg.Type.IsMemory() && arg.Op == OpPhi{
 			for _, phiArg := range arg.Args {
-				if s.loopnest.sdom.IsAncestorEq(phiArg.Block, val.Block) {
+				if s.fn.Sdom().IsAncestorEq(phiArg.Block, val.Block) {
 					val.SetArg(idx, phiArg)
 					break
 				}
@@ -123,6 +132,14 @@ func (s *state) hoist(block *Block, val *Value) {
 		val.moveTo(block, valIdx)
 		break
 	}
+}
+
+func isPinned(val*Value) bool{	
+	switch val.Op {
+	case OpPhi,OpInlMark, OpVarDef, OpVarLive:
+		return true
+	}
+	return false
 }
 
 // tryHoist hoists profitable loop invariant to block that dominates the entire loop.
@@ -159,11 +176,21 @@ func (s *state) tryHoist(val *Value) bool {
 		}
 	}
 
-	if val.Op == OpPhi || val.Op == OpInlMark {
+	if isPinned(val) {
 		return false
 	}
 
+	// Hoist value to loop entry
 	if canSpeculativelyExecuteValue(val) {
+		// If arguments of value is hoisted to loop land, the value itself should
+		// be hoisted to loop land
+		for _,arg := range val.Args {
+			if s.loop.guard != nil && !s.fn.Sdom().IsAncestorEq(arg.Block, s.loop.guard) {
+				s.hoist(s.loop.land, val)
+				s.hoisted[val] = true
+				return true
+			}
+		}
 		entry := s.loopnest.sdom.Parent(s.loop.header)
 		s.hoist(entry, val)
 		s.hoisted[val] = true
@@ -172,12 +199,6 @@ func (s *state) tryHoist(val *Value) bool {
 
 	// Dont worry, we can hoist some Values even if they can not speculatively
 	// execute, for example, Load, Store, etc, but requiring a few prerequisites
-
-	// Instructions are guaranteed to execute after entering loop?
-	if !s.isExecuteUnconditionally(val) {
-		fmt.Printf("==not execute unconditional%v\n", val)
-		return false
-	}
 
 	// Instructions access different memory locations?
 	if s.hasMemoryAlias(val) {
@@ -191,12 +212,24 @@ func (s *state) tryHoist(val *Value) bool {
 		fmt.Printf("==can not rotate%v\n", s.loop.LongString())
 		return false
 	}
+	// First apply loop rotation and then rely on dominator tree
+	// Instructions are guaranteed to execute after entering loop?
+	if !s.isExecuteUnconditionally(val) {
+		// Because loop header can always jump to the loop exit, all blocks
+		// inside the loop are never post-dominated by any loop exit.
+		// Therefore, we need to first apply loop rotation to eliminate the path
+		// from the loop header to the loop exit.
+		fmt.Printf("==not execute unconditional%v\n", val.LongString())
+		return false
+	}
+
 	if !s.loop.CreateLoopLand(s.loopnest.f) {
 		fmt.Printf("==can not create safe land")
 		return false
 	}
 
 	fmt.Printf("==hoist2\n")
+	// Hoist value to loop land
 	s.hoist(s.loop.land, val)
 	s.hoisted[val] = true
 	return true
@@ -239,7 +272,7 @@ func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 
 			isInvariant := true
 			for _, use := range value.Args {
-				if use.Type.IsMemory() {
+				if use.Type.IsMemory() && use.Op == OpPhi {
 					// Store Load and other memory value depends on memory value, which is usually represented
 					// as the non-loop-invariant memory value, for example, a memory Phi
 					// in loops, but this is not true semantically. We need to treat these
@@ -250,6 +283,7 @@ func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 					// 		v2 = Phi <mem> v1 v3
 					//      v6 = ...
 					// 	BlockIf v6 body, exit
+					//
 					//  body:
 					//		v3 (15) = Store <mem> v4 v5 v2
 					//  exit:
@@ -275,9 +309,9 @@ func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 // licm stands for loop invariant code motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
-	if f.Name != "(*AsmBuf).PutOpBytesLit" {
-		return
-	}
+	// if f.Name != "partitionByArgClass.Less" {
+	// 	return
+	// }
 	loopnest := f.loopnest()
 	if loopnest.hasIrreducible {
 		return
@@ -294,11 +328,11 @@ func licm(f *Func) {
 		// try to hoist loop invariant outside the loop
 		loopnest.assembleChildren() // initialize loop children
 		loopnest.findExits()        // initialize loop exits
-		s := &state{loopnest: loopnest, loop: loop}
+		s := &state{loopnest: loopnest, loop: loop, fn:f}
 		invariants := s.markInvariant(loopBlocks)
 
 		if invariants != nil && len(invariants) > 0 {
-			fmt.Printf("==invariants %v in %v\n", invariants, f.Name)
+			fmt.Printf("==invariants%v %v in %v\n", loop.header,invariants, f.Name)
 			s.invariants = invariants
 			s.hoisted = make(map[*Value]bool)
 
@@ -314,7 +348,7 @@ func licm(f *Func) {
 				s.tryHoist(invariant)
 			}
 		}
-		// ok := f.rotateLoop(loop)
+		// ok := f.RotateLoop(loop)
 		// if ok {
 		// 	//fmt.Printf("success: %s \n", f.Name)
 		// } else {
