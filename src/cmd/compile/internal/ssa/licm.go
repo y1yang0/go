@@ -62,7 +62,7 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 			loadPtr := val.Args[0]
 			storePtr := st.Args[0]
 			at := GetMemoryAlias(loadPtr, storePtr)
-			fmt.Printf("%v == %v with %v in %v\n", at, loadPtr.LongString(), storePtr.LongString(), val.Block.Func.Name)
+			fmt.Printf("==%v %v with %v in %v\n", at, loadPtr.LongString(), storePtr.LongString(), val.Block.Func.Name)
 			if at != NoAlias {
 				return true
 			}
@@ -76,7 +76,7 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 			ptr := v.Args[0]
 			storePtr := val.Args[0]
 			at := GetMemoryAlias(ptr, storePtr)
-			fmt.Printf("%v == %v with %v in %v\n", at, ptr.LongString(), storePtr.LongString(), val.Block.Func.Name)
+			fmt.Printf("==%v %v with %v in %v\n", at, ptr.LongString(), storePtr.LongString(), val.Block.Func.Name)
 			if at != NoAlias {
 				return true
 			}
@@ -132,17 +132,18 @@ func (s *state) hoist(block *Block, val *Value) {
 		if val != v {
 			continue
 		}
+		s.hoisted[val] = true
 		val.moveTo(block, valIdx)
 		break
 	}
 }
 
-func isPinned(val*Value) bool{
+func isHoistable(val*Value) bool{
 	switch val.Op {
-	case OpPhi,OpInlMark, OpVarDef, OpVarLive:
-		return true
+	case OpPhi,OpInlMark, OpVarDef, OpVarLive, OpInvalid:
+		return false
 	}
-	return false
+	return true
 }
 
 // tryHoist hoists profitable loop invariant to block that dominates the entire loop.
@@ -179,7 +180,8 @@ func (s *state) tryHoist(val *Value) bool {
 		}
 	}
 
-	if isPinned(val) {
+	if !isHoistable(val) {
+		fmt.Printf("==isnothoistable %v\n", val.LongString())
 		return false
 	}
 
@@ -191,13 +193,11 @@ func (s *state) tryHoist(val *Value) bool {
 			if s.loop.guard != nil && !s.fn.Sdom().IsAncestorEq(arg.Block, s.loop.guard) {
 				s.hoist(s.loop.land, val)
 				fmt.Printf("==Hoist1 %v to %v\n", val.LongString(), s.loop.land)
-				s.hoisted[val] = true
 				return true
 			}
 		}
 		entry := s.fn.Sdom().Parent(s.loop.header)
 		s.hoist(entry, val)
-		s.hoisted[val] = true
 		fmt.Printf("==Hoist1 %v to %v\n", val.LongString(), entry)
 		return true
 	}
@@ -216,6 +216,18 @@ func (s *state) tryHoist(val *Value) bool {
 	if !s.loopnest.f.RotateLoop(s.loop) {
 		fmt.Printf("==can not rotate%v\n", s.loop.LongString())
 		return false
+	}
+
+	if val.Block.Kind == BlockIf {
+		OOO:
+		for _,succ:= range val.Block.Succs {
+			for _, v:= range succ.b.Values {
+				if v.Op == OpPanicBounds || v.Op == OpPanicExtend {
+					fmt.Printf("+++PANIC")
+					break OOO
+				}
+			}
+		}
 	}
 	// First apply loop rotation and then rely on dominator tree
 	// Instructions are guaranteed to execute after entering loop?
@@ -236,7 +248,6 @@ func (s *state) tryHoist(val *Value) bool {
 	// Hoist value to loop land
 	s.hoist(s.loop.land, val)
 	fmt.Printf("==Hoist2 %v to %v\n", val.LongString(), s.loop.land)
-	s.hoisted[val] = true
 	return true
 }
 
