@@ -115,7 +115,6 @@ import (
 //  3. Update data dependencies after CFG transformation
 //     * Update cond to use updated Phi as arguments.
 //     * Merge any uses outside loop as loop header may not dominate them anymore.
-//     This relies on the value collected in the first step.
 //
 // One of the main purposes of Loop Rotation is to assist other optimizations
 // such as LICM. They may require that the rotated loop has a proper while safe
@@ -267,9 +266,7 @@ func (loop *loop) updateCond(cond *Value) {
 	}
 }
 
-// rewireLoopHeader rewires the loop CFG to the following shape:
-//
-//	loopHeader -> loopBody
+// loopHeader -> loopBody
 func (loop *loop) rewireLoopHeader() {
 	loopHeader := loop.header
 
@@ -287,9 +284,7 @@ func (loop *loop) rewireLoopHeader() {
 	loopHeader.Succs[0] = edge
 }
 
-// rewireLoopLatch rewires the loop CFG to the following shape:
-//
-//	loopLatch -> loopHeader(0), loopExit(1)
+// loopLatch -> loopHeader(0), loopExit(1)
 func (loop *loop) rewireLoopLatch(ctrl *Value) {
 	loopExit := loop.exit
 	loopLatch := loop.latch
@@ -307,18 +302,14 @@ func (loop *loop) rewireLoopLatch(ctrl *Value) {
 	loopExit.Preds[idx] = Edge{loopLatch, 1}
 }
 
-// rewireLoopEntry rewires the loop CFG to the following shape:
-//
-//	loopEntry -> loopGuard
+// loopEntry -> loopGuard
 func (loop *loop) rewireLoopEntry(sdom SparseTree, loopGuard *Block) {
 	entry := sdom.Parent(loop.header)
 	entry.Succs = entry.Succs[:0]
 	entry.AddEdgeTo(loopGuard)
 }
 
-// rewireLoopGuard rewires the loop CFG to the following shape:
-//
-//	loopGuard -> loopHeader(0), loopExit(1)
+// loopGuard -> loopHeader(0), loopExit(1)
 func (loop *loop) rewireLoopGuard(sdom SparseTree, guardCond *Value) {
 	loopHeader := loop.header
 	loopGuard := loop.guard
@@ -339,10 +330,8 @@ func (loop *loop) rewireLoopGuard(sdom SparseTree, guardCond *Value) {
 	loopHeader.Preds[idx] = Edge{loopGuard, 0}
 }
 
-// createLoopGuard creates loop guard and wires loop CFG to the following shape:
-//
-//	loopEntry -> loopGuard
-//	loopGuard -> loopHeader(0), loopExit(1)
+// loopEntry -> loopGuard
+// loopGuard -> loopHeader(0), loopExit(1)
 func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	// Create loop guard block
 	// TODO: Loop guard can be skipped if original loop form already exists such
@@ -502,8 +491,8 @@ func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]loopDep) {
 					}
 					useValue.SetArg(loopDep.idx, phi)
 				}
-				if fn.pass.debug >2 {
-					fmt.Printf("Replace loop def %v with new %v in %v(%b)\n",
+				if fn.pass.debug > 2 {
+					fmt.Printf("Replace loop def %v with new %v in %v(%v)\n",
 						loopDef, phi, useValue, useValue.Block)
 				}
 			} else {
@@ -512,9 +501,9 @@ func (loop *loop) mergeLoopUse(fn *Func, defUses map[*Value][]loopDep) {
 				for i, v := range useBlock.ControlValues() {
 					if v == loopDef {
 						useBlock.ReplaceControl(i, phi)
-						if fn.pass.debug >2 {
+						if fn.pass.debug > 2 {
 							fmt.Printf("Replace loop def %v with new %v in block ctrl %v\n",
-							loopDef, phi, loopDep.ctrl)
+								loopDef, phi, loopDep.ctrl)
 						}
 					}
 				}
@@ -540,14 +529,20 @@ func (loop *loop) IsRotatedForm() bool {
 }
 
 // CreateLoopLand creates a land block between loop guard and loop header, it
-// executes only if entering loop
+// executes only if entering loop.
 func (loop *loop) CreateLoopLand(fn *Func) bool {
 	if !loop.IsRotatedForm() {
 		return false
 	}
+	if loop.land != nil {
+		return true
+	}
+
 	// TODO: IF DEBUG
 	loop.verifyRotatedForm()
 
+	//	loopGuard -> loopLand
+	//	loopLand -> loopHeader
 	loopGuard := loop.guard
 	loopHeader := loop.header
 	loopLand := fn.NewBlock(BlockPlain)
