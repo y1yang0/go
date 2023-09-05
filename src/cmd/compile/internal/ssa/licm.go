@@ -209,6 +209,8 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 			block.Pos = bcheckBlock.Pos
 			moveTo(bcheck, block)
 			block.SetControl(bcheck)
+			block.Preds = make([]Edge, 0)
+			block.Preds = append(block.Preds, Edge{head, 0})
 			block.Succs = make([]Edge, 0)
 			for ti, tpred := range tail.Preds {
 				if tpred.b == head {
@@ -418,7 +420,7 @@ func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 // licm stands for loop invariant code motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
-	if f.Name != "whatthefuck" {
+	if f.Name != "byIndex.Less" {
 		return
 	}
 	loopnest := f.loopnest()
