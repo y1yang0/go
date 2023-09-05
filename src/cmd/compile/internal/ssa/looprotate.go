@@ -547,31 +547,16 @@ func (loop *loop) CreateLoopLand(fn *Func) bool {
 	loopHeader := loop.header
 	loopLand := fn.NewBlock(BlockPlain)
 	loopLand.Pos = loopHeader.Pos
+	loopLand.Preds = make([]Edge, 1, 1)
+	loopLand.Succs = make([]Edge, 1, 1)
 	loop.land = loopLand
 
-	edgeFound := 0
-	for i := 0; i < len(loopGuard.Succs); i++ {
-		succ := &loopGuard.Succs[i]
-		if succ.b == loopHeader {
-			succ.b = loopLand
-			succ.i = 0
-			loopLand.Preds = append(loopLand.Preds, Edge{loopGuard, i})
-			edgeFound++
-			break
-		}
+	if !loopGuard.ReplaceSucc(loopHeader, loopLand, 0) {
+		panic("Can not find loop header")
 	}
-	for i := 0; i < len(loopHeader.Preds); i++ {
-		pred := &loopHeader.Preds[i]
-		if pred.b == loopGuard {
-			pred.b = loopLand
-			pred.i = 0
-			loopLand.Succs = append(loopLand.Succs, Edge{loopHeader, i})
-			edgeFound++
-			break
-		}
-	}
-	if edgeFound != 2 {
-		panic("edges are not found between header and guard after rotation")
+
+	if !loopHeader.ReplacePred(loopGuard, loopLand, 0) {
+		panic("Can not find loop guard")
 	}
 
 	return true

@@ -157,6 +157,34 @@ func isHoistable(val *Value) bool {
 	return true
 }
 
+// b->c to b->d, n indicates which predecessor index of newSucc refers to b
+func (b *Block) ReplaceSucc(oldSucc, newSucc *Block, n int) bool {
+	for i := 0; i < len(b.Succs); i++ {
+		succ := &b.Succs[i]
+		if succ.b == oldSucc {
+			succ.b = newSucc
+			succ.i = n
+			newSucc.Preds[n] = Edge{b, i}
+			return true
+		}
+	}
+	return false
+}
+
+// c->b to d->b, n indicates which successor index of newPred refers to b
+func (b *Block) ReplacePred(oldPred, newPred *Block, n int) bool {
+	for i := 0; i < len(b.Preds); i++ {
+		pred := &b.Preds[i]
+		if pred.b == oldPred {
+			pred.b = newPred
+			pred.i = n
+			newPred.Succs[n] = Edge{b, i}
+			return true
+		}
+	}
+	return false
+}
+
 // Hoist the loop-invariant panic check to loop land after rotation
 // This simplifies CFG and allow more Value be hosited
 //
@@ -209,25 +237,17 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 			block.Pos = bcheckBlock.Pos
 			moveTo(bcheck, block)
 			block.SetControl(bcheck)
-			block.Preds = make([]Edge, 0)
-			block.Preds = append(block.Preds, Edge{head, 0})
-			block.Succs = make([]Edge, 0)
+			block.Preds = make([]Edge, 1, 1)
+			block.Succs = make([]Edge, 2, 2)
+
+			head.ReplaceSucc(tail, block, 0)
+
 			for ti, tpred := range tail.Preds {
 				if tpred.b == head {
-					if bi == 0 {
-						block.Succs = append(block.Succs, Edge{panicBlock, 0})
-						block.Succs = append(block.Succs, Edge{tail, ti})
-						panicBlock.Preds[0] = Edge{block, 0}
-					} else {
-						block.Succs = append(block.Succs, Edge{tail, ti})
-						block.Succs = append(block.Succs, Edge{panicBlock, 0})
-						panicBlock.Preds[0] = Edge{block, 1}
-					}
-					break
+					tail.ReplacePred(head, block, ti)
 				}
 			}
-			head.Succs = head.Succs[:1]
-			head.Succs[0] = Edge{block, 0}
+			panicBlock.ReplacePred(bcheckBlock, block, bi)
 			break
 		}
 	}
