@@ -188,18 +188,20 @@ func (b *Block) ReplacePred(oldPred, newPred *Block, n int) bool {
 // Hoist the loop-invariant panic check to loop land after rotation
 // This simplifies CFG and allow more Value be hosited
 //
-//	                                   		(Rotated Form...)
-//	                                          bound check  <= loop land
-//	       loop header                          ╱    ╲
-//	        ╱   ▲   ╲                          ╱      ╲
-//	       ╱     ╲   ╲                    loop header panic
-//	  bound check ╲  loop exit     =>       ╱   ▲
-//	    ╱   ╲     ╱                         ╲   ╱
-//	   ╱     ╲   ╱                        loop latch
-//	panic   loop latch                        │
-//	                                          │
-//	                                      loop exit
-//	                                  		(Rotated Form...)
+//	                                               loop guard
+//	                                                ╱      ╲
+//	                                           loop land    ╲
+//	                                              ╱          ╲
+//	                                        new bound check*  ╲
+//	       loop header                          ╱    ╲        ╱
+//	        ╱   ▲   ╲                          ╱      ╲      ╱
+//	       ╱     ╲   ╲                    loop header panic ╱
+//	  bound check ╲  loop exit     =>       ╱   ▲      ____╱
+//	    ╱   ╲     ╱                         ╲   ╱     ╱
+//	   ╱     ╲   ╱                        loop latch ╱
+//	panic   loop latch                        │     ╱
+//	                                          │    ╱
+//	                                        loop exit
 func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 	// Create loop land to place bound check
 	if !loop.CreateLoopLand(fn) {
@@ -211,15 +213,15 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 		if succ.b.Kind == BlockExit {
 			fmt.Printf("==Hoist3 %v\n", bcheck.LongString())
 			// Rewire old bound check block to normal branch unconditionally
-			bcheckBlock := bcheck.Block
-			normalBlock := bcheckBlock.Succs[1-bi].b
-			bcheckBlock.Kind = BlockPlain
-			bcheckBlock.Likely = BranchUnknown
-			bcheckBlock.ResetControls()
-			bcheckBlock.Succs = bcheckBlock.Succs[:1]
+			newBcheck := bcheck.Block
+			normalBlock := newBcheck.Succs[1-bi].b
+			newBcheck.Kind = BlockPlain
+			newBcheck.Likely = BranchUnknown
+			newBcheck.ResetControls()
+			newBcheck.Succs = newBcheck.Succs[:1]
 			for ni, pred := range normalBlock.Preds {
-				if pred.b == bcheckBlock {
-					bcheckBlock.Succs[0] = Edge{normalBlock, ni}
+				if pred.b == newBcheck {
+					newBcheck.Succs[0] = Edge{normalBlock, ni}
 					break
 				}
 			}
@@ -233,8 +235,8 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 				panic("where is your loop land")
 			}
 			block := fn.NewBlock(BlockIf)
-			block.Likely = bcheckBlock.Likely
-			block.Pos = bcheckBlock.Pos
+			block.Likely = newBcheck.Likely
+			block.Pos = newBcheck.Pos
 			moveTo(bcheck, block)
 			block.SetControl(bcheck)
 			block.Preds = make([]Edge, 1, 1)
@@ -247,7 +249,7 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 					tail.ReplacePred(head, block, ti)
 				}
 			}
-			panicBlock.ReplacePred(bcheckBlock, block, bi)
+			panicBlock.ReplacePred(newBcheck, block, bi)
 			break
 		}
 	}
