@@ -125,34 +125,17 @@ func hoist(f *Func, loop *loop, block *Block, val *Value) {
 		memState(f, startMem, endMem)
 		newMem := endMem[loop.header.ID]
 		val.SetArg(len(val.Args)-1, newMem)
+
+		// If val produces memory, all its uses should be replaced with incoming
+		// memory input of val
+		switch val.Op {
+		case OpStore, OpMove, OpZero, OpStoreWB, OpMoveWB, OpZeroWB:
+			mem := arg
+			for _, b := range f.Blocks {
+				b.ReplaceUses(val, mem)
+			}
+		}
 	}
-	// for idx, arg := range val.Args {
-	// 	if arg.Op == OpPhi && arg.Type.IsMemory() {
-	// 		// Find memory Phi, lookup new incoming memory through memory chain
-	// 		// Load (v1 (Phi <mem> v2 (Phi InitMem v3)))
-	// 		sdom := s.fn.Sdom()
-	// 		t := arg
-	// 		for {
-	// 			oldt := t
-	// 			for _, ta := range t.Args {
-	// 				if sdom.isAncestor(ta.Block, t.Block) {
-	// 					t = ta
-	// 					break
-	// 				}
-	// 			}
-	// 			if oldt == t {
-	// 				fmt.Printf("===%v %v\n", s.fn.Name, val.LongString())
-	// 				panic("can not found memory Phi through memory chain")
-	// 			}
-
-	// 			if sdom.isAncestor(t.Block, s.loop.header) {
-	// 				val.SetArg(idx, t)
-	// 				break
-	// 			}
-	// 		}
-	// 	}
-	// }
-
 	moveTo(val, block)
 }
 
@@ -390,9 +373,9 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 // licm stands for Loop Invariant Code Motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
-	// if f.Name != "traceString" {
-	// 	return
-	// }
+	if f.Name != "(*ssafn).AllocFrame" {
+		return
+	}
 
 	loopnest := f.loopnest()
 	if loopnest.hasIrreducible || len(loopnest.loops) == 0 {
@@ -452,9 +435,20 @@ func licm(f *Func) {
 			}
 		}
 	}
+	// Compute def-use chains for values that can produce memory
+	// v3 = const v1 v2
+	// v4 = load v3
+	defUses := make(map[*Value][]*Value)
+	for _, block := range f.Blocks {
+		for _, val := range block.Values {
+			defUses[val] = make([]*Value, 0, val.Uses)
+			for _, arg := range val.Args {
+				if defUses[val]
+			}
+		}
+	}
 
-	// At this point, the CFG shape is fixed, rebuild loop structures and apply
-	// LICM for each loop
+	// At this point, the CFG shape is fixed, apply LICM for each loop invariants
 	for id, loop := range loopnest.b2l {
 		if li, exist := b2li[ID(id)]; exist {
 			// To avoid compilation stale
