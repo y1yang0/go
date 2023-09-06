@@ -97,28 +97,9 @@ import (
 // entire loop, including all loop exits. However, this may not always hold true
 // for some exotic loop exits. It is necessary to check this before rotation.
 //
-// The detailed algorithm is summarized as following steps
-//
-//  1. Check whether loop can apply loop rotate
-//     * Loop must be a natural loop and have a single exit and so on..
-//     * Collect all values defined within a loop and used outside of the loop.
-//     I place it earlier because currently it cannot handle a value outside of
-//     a loop that depends on a non-Phi value defined within the loop, it should
-//     bail out compilation in such cases.
-//
-//  2. Rotate condition and rewire loop edges
-//     * Move conditional test from loop header to loop latch.
-//     * Rewire loop header to loop body unconditionally.
-//     * Rewire loop latch to header and exit based on new coming conditional test.
-//     * Create new loop guard block and wire it to appropriate blocks.
-//
-//  3. Update data dependencies after CFG transformation
-//     * Update cond to use updated Phi as arguments.
-//     * Merge any uses outside loop as loop header may not dominate them anymore.
-//
 // One of the main purposes of Loop Rotation is to assist other optimizations
 // such as LICM. They may require that the rotated loop has a proper while safe
-// block to place new Values, an additional loop land block is hereby created to
+// block to place new Values, an optional loop land block is hereby created to
 // give these optimizations a chance to keep them from being homeless.
 //
 //	     entry
@@ -152,6 +133,28 @@ import (
 //	│	   │
 //	│      ▼
 //	└─► loop exit
+//
+// The detailed algorithm is summarized as following steps
+//
+//  1. Check whether loop can apply loop rotate
+//     * Loop must be a natural loop and have a single exit and so on..
+//     * Collect all values defined within a loop and used outside of the loop.
+//     I place it earlier because currently it cannot handle a value outside of
+//     a loop that depends on a non-Phi value defined within the loop, it should
+//     bail out compilation in such cases.
+//
+//  2. Rotate condition and rewire loop edges
+//     * Move conditional test from loop header to loop latch.
+//     * Rewire loop header to loop body unconditionally.
+//     * Rewire loop latch to header and exit based on new coming conditional test.
+//     * Create new loop guard block and wire it to appropriate blocks.
+//
+//  3. Update data dependencies after CFG transformation
+//     * Update cond to use updated Phi as arguments.
+//     * Merge any uses outside loop as loop header may not dominate them anymore.
+//
+//  4. Create loop land between loop guard and loop header (Optional)
+//     * Create loop land and wire it to loop guard and loop header.
 func (loop *loop) buildLoopForm(fn *Func) string {
 	if loop.outer != nil {
 		// TODO: 太过严格，考虑放松？
@@ -269,10 +272,8 @@ func (loop *loop) updateCond(cond *Value) {
 // loopHeader -> loopBody
 func (loop *loop) rewireLoopHeader() {
 	loopHeader := loop.header
+	loopHeader.Reset(BlockPlain)
 
-	loopHeader.Kind = BlockPlain
-	loopHeader.Likely = BranchUnknown
-	loopHeader.ResetControls()
 	var edge Edge
 	for _, succ := range loopHeader.Succs {
 		if succ.b == loop.body {
@@ -288,9 +289,8 @@ func (loop *loop) rewireLoopHeader() {
 func (loop *loop) rewireLoopLatch(ctrl *Value) {
 	loopExit := loop.exit
 	loopLatch := loop.latch
+	loopLatch.resetWithControl(BlockIf, ctrl)
 
-	loopLatch.Kind = BlockIf
-	loopLatch.SetControl(ctrl)
 	var idx int
 	for i := 0; i < len(loopExit.Preds); i++ {
 		if loopExit.Preds[i].b == loop.header {
@@ -318,6 +318,7 @@ func (loop *loop) rewireLoopGuard(sdom SparseTree, guardCond *Value) {
 	loopGuard.Pos = loopHeader.Pos
 	loopGuard.Likely = loopHeader.Likely // respect header's branch predication
 	loopGuard.SetControl(guardCond)
+
 	var idx int
 	for i := 0; i < len(loopHeader.Preds); i++ {
 		if loopHeader.Preds[i].b == entry {
@@ -551,20 +552,17 @@ func (loop *loop) CreateLoopLand(fn *Func) bool {
 	loopLand.Succs = make([]Edge, 1, 1)
 	loop.land = loopLand
 
-	if !loopGuard.ReplaceSucc(loopHeader, loopLand, 0) {
-		panic("Can not find loop header")
-	}
-
-	if !loopHeader.ReplacePred(loopGuard, loopLand, 0) {
-		panic("Can not find loop guard")
-	}
-
+	loopGuard.ReplaceSucc(loopHeader, loopLand, 0)
+	loopHeader.ReplacePred(loopGuard, loopLand, 0)
 	return true
 }
 
 // TODO: 新增测试用例
 // TODO: 压力测试，在每个pass之后都执行loop rotate；执行多次loop rotate；打开ssacheck；确保无bug
 func (fn *Func) RotateLoop(loop *loop) bool {
+	if loop.IsRotatedForm() {
+		return true
+	}
 	// if fn.Name != "whatthefuck" {
 	// 	return false
 	// }

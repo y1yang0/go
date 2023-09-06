@@ -483,10 +483,10 @@ var passes = [...]pass{
 	{name: "late fuse", fn: fuseLate},
 	{name: "dse", fn: dse},
 	{name: "memcombine", fn: memcombine},
+	{name: "loop invariant code motion", fn: licm},           // TODO: WHY WRITE BARRIER CRASH???
 	{name: "writebarrier", fn: writebarrier, required: true}, // expand write barrier ops
 	{name: "insert resched checks", fn: insertLoopReschedChecks,
 		disabled: !buildcfg.Experiment.PreemptibleLoops}, // insert resched checks in loops.
-	{name: "loop invariant code motion", fn: licm},
 
 	{name: "lower", fn: lower, required: true},
 	{name: "addressing modes", fn: addressingModes, required: false},

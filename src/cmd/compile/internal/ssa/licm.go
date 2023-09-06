@@ -99,6 +99,8 @@ func (s *state) hasMemoryAlias(val *Value) bool {
 // Otherwise, it should not be hoisted. The most common cases are invariants guarded by
 // conditional expressions.
 func (s *state) isExecuteUnconditionally(val *Value) bool {
+	s.loopnest.findExits()
+
 	block := val.Block
 	sdom := s.fn.Sdom()
 	for _, exit := range s.loop.exits {
@@ -109,14 +111,6 @@ func (s *state) isExecuteUnconditionally(val *Value) bool {
 			continue
 		}
 		if !sdom.IsAncestorEq(block, exit) {
-			// fmt.Printf("==unc %v", exit.LongString())
-			// pred := exit.Preds[0].b
-			// if len(pred.ControlValues())>0 {
-			// 	ct := pred.ControlValues()[0]
-			// 	if s.invariants[ct] {
-			// 		fmt.Printf("==inv %v", ct)
-			// 	}
-			// }
 			return false
 		}
 	}
@@ -134,53 +128,48 @@ func moveTo(val *Value, block *Block) {
 }
 
 func (s *state) hoist(block *Block, val *Value) {
-	// rewire memory Phi input if needed
+	// TODO: STore produces memory, all uses should be updated
 	for idx, arg := range val.Args {
-		if arg.Type.IsMemory() && arg.Op == OpPhi {
-			for _, phiArg := range arg.Args {
-				if s.fn.Sdom().IsAncestorEq(phiArg.Block, val.Block) {
-					val.SetArg(idx, phiArg)
+		if arg.Op == OpPhi && arg.Type.IsMemory() {
+			// incoming arguemnt of val may be a memory Phi that defined within loop, we
+			// need to rewire it
+			// Find memory Phi, lookup new incoming memory through memory chain
+			// Load (v1 (Phi <mem> v2 (Phi InitMem v3)))
+			sdom := s.fn.Sdom()
+			t := arg
+			for {
+				oldt := t
+				for _, ta := range t.Args {
+					if sdom.isAncestor(ta.Block, t.Block) {
+						t = ta
+						break
+					}
+				}
+				if oldt == t {
+					fmt.Printf("===%v %v\n", s.fn.Name, val.LongString())
+					panic("can not found memory Phi through memory chain")
+				}
+
+				if sdom.isAncestor(t.Block, s.loop.header) {
+					val.SetArg(idx, t)
 					break
 				}
 			}
 		}
 	}
+
 	s.hoisted[val] = true
 	moveTo(val, block)
 }
 
-func isHoistable(val *Value) bool {
+func isPinned(val *Value) bool {
 	switch val.Op {
+	case OpCopy:
+		if val.Type.IsMemory() {
+			return true
+		}
 	case OpPhi, OpInlMark, OpVarDef, OpVarLive, OpInvalid:
-		return false
-	}
-	return true
-}
-
-// b->c to b->d, n indicates which predecessor index of newSucc refers to b
-func (b *Block) ReplaceSucc(oldSucc, newSucc *Block, n int) bool {
-	for i := 0; i < len(b.Succs); i++ {
-		succ := &b.Succs[i]
-		if succ.b == oldSucc {
-			succ.b = newSucc
-			succ.i = n
-			newSucc.Preds[n] = Edge{b, i}
-			return true
-		}
-	}
-	return false
-}
-
-// c->b to d->b, n indicates which successor index of newPred refers to b
-func (b *Block) ReplacePred(oldPred, newPred *Block, n int) bool {
-	for i := 0; i < len(b.Preds); i++ {
-		pred := &b.Preds[i]
-		if pred.b == oldPred {
-			pred.b = newPred
-			pred.i = n
-			newPred.Succs[n] = Edge{b, i}
-			return true
-		}
+		return true
 	}
 	return false
 }
@@ -213,15 +202,14 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 		if succ.b.Kind == BlockExit {
 			fmt.Printf("==Hoist3 %v\n", bcheck.LongString())
 			// Rewire old bound check block to normal branch unconditionally
-			newBcheck := bcheck.Block
-			normalBlock := newBcheck.Succs[1-bi].b
-			newBcheck.Kind = BlockPlain
-			newBcheck.Likely = BranchUnknown
-			newBcheck.ResetControls()
-			newBcheck.Succs = newBcheck.Succs[:1]
+			bcheckBlock := bcheck.Block
+			normalBlock := bcheckBlock.Succs[1-bi].b
+			bcheckBlock.Reset(BlockPlain)
+
+			bcheckBlock.Succs = bcheckBlock.Succs[:1]
 			for ni, pred := range normalBlock.Preds {
-				if pred.b == newBcheck {
-					newBcheck.Succs[0] = Edge{normalBlock, ni}
+				if pred.b == bcheckBlock {
+					bcheckBlock.Succs[0] = Edge{normalBlock, ni}
 					break
 				}
 			}
@@ -235,8 +223,8 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 				panic("where is your loop land")
 			}
 			block := fn.NewBlock(BlockIf)
-			block.Likely = newBcheck.Likely
-			block.Pos = newBcheck.Pos
+			block.Likely = bcheckBlock.Likely
+			block.Pos = bcheckBlock.Pos
 			moveTo(bcheck, block)
 			block.SetControl(bcheck)
 			block.Preds = make([]Edge, 1, 1)
@@ -249,7 +237,7 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 					tail.ReplacePred(head, block, ti)
 				}
 			}
-			panicBlock.ReplacePred(newBcheck, block, bi)
+			panicBlock.ReplacePred(bcheckBlock, block, bi)
 			break
 		}
 	}
@@ -271,7 +259,7 @@ func (s *state) tryHoist(val *Value) bool {
 		}
 		if _, exist := s.invariants[arg]; !exist {
 			// must be type of memory or defiend outside loop
-			if !arg.Type.IsMemory() && !s.loopnest.sdom.IsAncestorEq(arg.Block, s.loop.header) {
+			if !arg.Type.IsMemory() && !s.fn.Sdom().IsAncestorEq(arg.Block, s.loop.header) {
 				fmt.Printf("must define outside loop %v\n", arg.LongString())
 				panic("must define outside loop")
 			}
@@ -289,8 +277,7 @@ func (s *state) tryHoist(val *Value) bool {
 		}
 	}
 
-	if !isHoistable(val) {
-		fmt.Printf("==isnothoistable %v\n", val.LongString())
+	if isPinned(val) {
 		return false
 	}
 
@@ -319,6 +306,23 @@ func (s *state) tryHoist(val *Value) bool {
 					}
 					hoistBoundCheck(s.fn, s.loop, val)
 					s.hoisted[val] = true
+
+					// Hoist panic block is about equal to hoist the loop exit,
+					// so rebuild the whole loopnest here
+					// TODO: THIS IS TOO NASTY, MUST BE REFACTORED LATER
+					s.loopnest = loopnestfor(s.fn)
+					oldLoop := s.loop
+					for _, loop := range s.loopnest.loops {
+						if loop.header == oldLoop.header {
+							loop.guard = oldLoop.guard
+							loop.exit = oldLoop.exit
+							loop.latch = oldLoop.latch
+							loop.body = oldLoop.body
+							loop.land = oldLoop.land
+							s.loop = loop
+							break
+						}
+					}
 					return true
 				}
 			}
@@ -341,8 +345,8 @@ func (s *state) tryHoist(val *Value) bool {
 		}
 
 		// Hoist value to loop land
-		s.hoist(s.loop.land, val)
 		fmt.Printf("==Hoist2 %v to %v\n", val.LongString(), s.loop.land)
+		s.hoist(s.loop.land, val)
 		return true
 	} else {
 		fmt.Printf("==can not rotate%v\n", s.loop.LongString())
@@ -353,14 +357,14 @@ func (s *state) tryHoist(val *Value) bool {
 			// be hoisted to loop land
 			for _, arg := range val.Args {
 				if s.loop.guard != nil && !s.fn.Sdom().IsAncestorEq(arg.Block, s.loop.guard) {
-					s.hoist(s.loop.land, val)
 					fmt.Printf("==Hoist1 %v to %v\n", val.LongString(), s.loop.land)
+					s.hoist(s.loop.land, val)
 					return true
 				}
 			}
 			entry := s.fn.Sdom().Parent(s.loop.header)
-			s.hoist(entry, val)
 			fmt.Printf("==Hoist1 %v to %v\n", val.LongString(), entry)
+			s.hoist(entry, val)
 			return true
 		}
 	}
@@ -442,7 +446,7 @@ func (s *state) markInvariant(loopBlocks []*Block) map[*Value]bool {
 // licm stands for loop invariant code motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
-	if f.Name != "byIndex.Less" {
+	if f.Name != "mkfwd" {
 		return
 	}
 	loopnest := f.loopnest()
