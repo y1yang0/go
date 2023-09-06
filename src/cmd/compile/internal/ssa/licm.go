@@ -132,7 +132,7 @@ func hoist(f *Func, loop *loop, block *Block, val *Value) {
 		case OpStore, OpMove, OpZero, OpStoreWB, OpMoveWB, OpZeroWB:
 			mem := arg
 			for _, b := range f.Blocks {
-				b.ReplaceUses(val, mem)
+				b.replaceUses(val, mem)
 			}
 		}
 	}
