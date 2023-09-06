@@ -435,18 +435,6 @@ func licm(f *Func) {
 			}
 		}
 	}
-	// Compute def-use chains for values that can produce memory
-	// v3 = const v1 v2
-	// v4 = load v3
-	defUses := make(map[*Value][]*Value)
-	for _, block := range f.Blocks {
-		for _, val := range block.Values {
-			defUses[val] = make([]*Value, 0, val.Uses)
-			for _, arg := range val.Args {
-				if defUses[val]
-			}
-		}
-	}
 
 	// At this point, the CFG shape is fixed, apply LICM for each loop invariants
 	for id, loop := range loopnest.b2l {
