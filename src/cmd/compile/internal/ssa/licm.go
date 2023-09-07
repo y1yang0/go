@@ -33,6 +33,17 @@ type loopInvariants struct {
 	stores     []*Value
 }
 
+func (li *loopInvariants) stableKeys() []*Value {
+	keys := make([]*Value, 0)
+	for k, _ := range li.invariants {
+		keys = append(keys, k)
+	}
+	sort.SliceStable(keys, func(i, j int) bool {
+		return keys[i].ID < keys[j].ID
+	})
+	return keys
+}
+
 func printInvariant(val *Value, block *Block, domBlock *Block) {
 	fmt.Printf("== Hoist %v from b%v to b%v in %v\n",
 		val.String(),
@@ -66,6 +77,9 @@ func hasMemoryAlias(loads []*Value, stores []*Value, val *Value) bool {
 			return false
 		}
 		for _, v := range append(stores, loads...) {
+			if v == val {
+				continue
+			}
 			ptr := v.Args[0]
 			storePtr := val.Args[0]
 			at := GetMemoryAlias(ptr, storePtr)
@@ -118,12 +132,13 @@ func hoist(f *Func, loop *loop, block *Block, val *Value) {
 	// TODO: STore produces memory, all uses should be updated
 	// If val has memory input, we need to replace it with new one after hoisting
 	if arg := val.MemoryArg(); arg != nil {
+		// Reset value memory
 		startMem := f.Cache.allocValueSlice(f.NumBlocks())
 		defer f.Cache.freeValueSlice(startMem)
 		endMem := f.Cache.allocValueSlice(f.NumBlocks())
 		defer f.Cache.freeValueSlice(endMem)
 		memState(f, startMem, endMem)
-		newMem := endMem[loop.header.ID]
+		newMem := endMem[loop.guard.ID]
 		val.SetArg(len(val.Args)-1, newMem)
 
 		// If val produces memory, all its uses should be replaced with incoming
@@ -133,6 +148,19 @@ func hoist(f *Func, loop *loop, block *Block, val *Value) {
 			mem := arg
 			for _, b := range f.Blocks {
 				b.replaceUses(val, mem)
+			}
+			// Reset loop header memory
+			headerMem := startMem[loop.header.ID]
+			if headerMem != nil {
+				if headerMem.Op != OpPhi {
+					panic("unexpected")
+				}
+				for idx, headerMemArg := range headerMem.Args {
+					if f.Sdom().isAncestor(headerMemArg.Block, loop.header) {
+						headerMem.SetArg(idx, val)
+						break
+					}
+				}
 			}
 		}
 	}
@@ -265,7 +293,7 @@ func findInvariant(ln *loopnest, loop *loop) *loopInvariants {
 
 			isInvariant := true
 			for _, use := range value.Args {
-				if use.Type.IsMemory() && use.Op == OpPhi {
+				if use.Type.IsMemory() {
 					// Store Load and other memory value depends on memory value, which is usually represented
 					// as the non-loop-invariant memory value, for example, a memory Phi
 					// in loops, but this is not true semantically. We need to treat these
@@ -328,7 +356,7 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 	bcheckBlock := bcheck.Block
 	for bi, succ := range bcheckBlock.Succs {
 		if succ.b.Kind == BlockExit {
-			fmt.Printf("==Hoist3 %v\n", bcheck.LongString())
+			fmt.Printf("==Hoist bound check %v(%v)\n", bcheck, bcheckBlock)
 			// Rewire old bound check block to normal branch unconditionally
 			normalBlock := bcheckBlock.Succs[1-bi].b
 			bcheckBlock.Reset(BlockPlain)
@@ -373,7 +401,7 @@ func hoistBoundCheck(fn *Func, loop *loop, bcheck *Value) {
 // licm stands for Loop Invariant Code Motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
-	if f.Name != "(*ssafn).AllocFrame" {
+	if f.Name != "whatthefuck" {
 		return
 	}
 
@@ -399,7 +427,7 @@ func licm(f *Func) {
 		b2li[loop.header.ID] = li
 
 		// Simplify CFG by hoisting bound check as much as possible
-		for val, _ := range li.invariants {
+		for _, val := range li.stableKeys() {
 			if val.Block.Kind != BlockIf ||
 				(val.Op != OpIsInBounds && val.Op != OpIsSliceInBounds &&
 					val.Op != OpIsNonNil /*Really?*/) {
@@ -440,14 +468,8 @@ func licm(f *Func) {
 	for id, loop := range loopnest.b2l {
 		if li, exist := b2li[ID(id)]; exist {
 			// To avoid compilation stale
-			keys := make([]*Value, 0)
-			for k, _ := range li.invariants {
-				keys = append(keys, k)
-			}
-			sort.SliceStable(keys, func(i, j int) bool {
-				return keys[i].ID < keys[j].ID
-			})
-			fmt.Printf("==invariants %v\n", keys)
+			keys := li.stableKeys()
+			fmt.Printf("Loop Invariants %v\n", keys)
 			for _, val := range keys {
 				tryHoist(f, loop, li, val)
 			}
