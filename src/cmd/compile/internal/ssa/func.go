@@ -83,6 +83,12 @@ type LocalSlotSplitKey struct {
 	Type   *types.Type // type of slot
 }
 
+func assert(cond bool, msg... string) {
+	if !cond {
+		panic(fmt.Sprintf(...msg))
+	}
+}
+
 // NewFunc returns a new, empty function object.
 // Caller must set f.Config and f.Cache before using f.
 func NewFunc(fe Frontend) *Func {
