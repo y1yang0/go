@@ -128,16 +128,22 @@ func moveTo(val *Value, block *Block) {
 	}
 }
 
+func computeMemState(f *Func) ([]*Value, []*Value) {
+	startMem := f.Cache.allocValueSlice(f.NumBlocks())
+	defer f.Cache.freeValueSlice(startMem)
+	endMem := f.Cache.allocValueSlice(f.NumBlocks())
+	defer f.Cache.freeValueSlice(endMem)
+	memState(f, startMem, endMem)
+	return startMem, endMem
+}
+
 func hoist(f *Func, loop *loop, block *Block, val *Value) {
 	// TODO: STore produces memory, all uses should be updated
 	// If val has memory input, we need to replace it with new one after hoisting
 	if arg := val.MemoryArg(); arg != nil {
 		// Reset value memory
-		startMem := f.Cache.allocValueSlice(f.NumBlocks())
-		defer f.Cache.freeValueSlice(startMem)
-		endMem := f.Cache.allocValueSlice(f.NumBlocks())
-		defer f.Cache.freeValueSlice(endMem)
-		memState(f, startMem, endMem)
+		// TODO: DONT COMPUTE EVERY TIME
+		startMem, endMem := computeMemState(f)
 		newMem := endMem[loop.guard.ID]
 		val.SetArg(len(val.Args)-1, newMem)
 
@@ -436,8 +442,8 @@ func licm(f *Func) {
 			for _, succ := range val.Block.Succs {
 				b := succ.b
 				if b.Kind == BlockExit && len(b.Values) == 1 {
-					bvop := b.Values[0].Op
-					if bvop != OpPanicBounds && bvop != OpPanicExtend {
+					bv := b.Values[0]
+					if bv.Op != OpPanicBounds && bv.Op != OpPanicExtend {
 						panic("must be panic call")
 					}
 					hoistBoundCheck(f, loop, val)
