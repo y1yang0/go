@@ -447,7 +447,7 @@ func fixMemoryState(loop *loop, startMem, endMem, bcheckPanics []*Value) {
 // licm stands for Loop Invariant Code Motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
-	if f.Name != "onePassCopy" {
+	if f.Name != "cleanupOnePass" {
 		return
 	}
 
