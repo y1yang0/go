@@ -552,12 +552,8 @@ func (loop *loop) CreateLoopLand(fn *Func) bool {
 	loopLand.Succs = make([]Edge, 1, 1)
 	loop.land = loopLand
 
-	if !loopGuard.ReplaceSucc(loopHeader, loopLand, 0) {
-		fn.Fatalf("Can not rewire loop guard to loop land")
-	}
-	if !loopHeader.ReplacePred(loopGuard, loopLand, 0) {
-		fn.Fatalf("Can not rewire loop land to loop header")
-	}
+	loopGuard.ReplaceSucc(loopHeader, loopLand, 0)
+	loopHeader.ReplacePred(loopGuard, loopLand, 0)
 	return true
 }
 

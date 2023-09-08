@@ -83,9 +83,9 @@ type LocalSlotSplitKey struct {
 	Type   *types.Type // type of slot
 }
 
-func assert(cond bool, msg... string) {
+func assert(cond bool, fx string, msg ...interface{}) {
 	if !cond {
-		panic(fmt.Sprintf(...msg))
+		panic(fmt.Sprintf(fx, msg...))
 	}
 }
 
