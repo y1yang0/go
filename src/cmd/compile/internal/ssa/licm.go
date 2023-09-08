@@ -12,8 +12,7 @@ import (
 // ----------------------------------------------------------------------------
 // Loop Invariant Code Motion
 //
-// This pass hoists loop invariants to the loop header or sinks them into loop
-// exits. The main idea behind LICM is to move loop invariant values outside of
+// The main idea behind LICM is to move loop invariant values outside of
 // the loop so that they are only executed once, instead of being repeatedly
 // executed with each iteration of the loop. In the context of LICM, if a loop
 // invariant can be speculatively executed, then it can be freely hoisted to the
