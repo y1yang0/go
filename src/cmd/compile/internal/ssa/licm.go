@@ -175,11 +175,14 @@ func alwaysExecute(sdom SparseTree, loop *loop, val *Value) bool {
 
 func isPinned(val *Value) bool {
 	switch val.Op {
-	case OpCopy:
-		if val.Type.IsMemory() {
+	case OpCopy, OpSelect0, OpSelect1, OpSelectN:
+		// TODO: VAL ITSELF IS MEMORY OR ARG MEMORY?
+		if arg := val.Args[0]; arg.Type.IsMemory() {
 			return true
 		}
 	case OpPhi, OpInlMark, OpVarDef, OpVarLive, OpInvalid:
+		return true
+	case OpAtomicLoad8, OpAtomicLoad32, OpAtomicLoad64, OpAtomicLoadPtr, OpAtomicLoadAcq32, OpAtomicLoadAcq64, OpAtomicStore8, OpAtomicStore32, OpAtomicStore64, OpAtomicStorePtrNoWB, OpAtomicStoreRel32, OpAtomicStoreRel64, OpAtomicExchange32, OpAtomicExchange64, OpAtomicAdd32, OpAtomicAdd64, OpAtomicCompareAndSwap32, OpAtomicCompareAndSwap64, OpAtomicCompareAndSwapRel32, OpAtomicAnd8, OpAtomicAnd32, OpAtomicOr8, OpAtomicOr32, OpAtomicAdd32Variant, OpAtomicAdd64Variant, OpAtomicExchange32Variant, OpAtomicExchange64Variant, OpAtomicCompareAndSwap32Variant, OpAtomicCompareAndSwap64Variant, OpAtomicAnd8Variant, OpAtomicAnd32Variant, OpAtomicOr8Variant, OpAtomicOr32Variant:
 		return true
 	}
 	return false
@@ -236,8 +239,8 @@ func tryHoist(fn *Func, loop *loop, li *loopInvariants, val *Value) bool {
 		if rotated {
 			targetBlock = loop.land
 		}
-		fmt.Printf("==HoistSimple %v to %v\n", val.LongString(), targetBlock)
 		hoist(fn, loop, targetBlock, val)
+		fmt.Printf("==HoistSimple %v to %v\n", val.LongString(), targetBlock)
 		return true
 	}
 
@@ -257,8 +260,8 @@ func tryHoist(fn *Func, loop *loop, li *loopInvariants, val *Value) bool {
 		}
 
 		// Hoist value to loop land if it cannt be speculatively executed
-		fmt.Printf("==HoistComplex %v to %v\n", val.LongString(), loop.land)
 		hoist(fn, loop, loop.land, val)
+		fmt.Printf("==HoistComplex %v to %v\n", val.LongString(), loop.land)
 		return true
 	}
 
@@ -418,7 +421,9 @@ func fixMemoryState(loop *loop, startMem, endMem, bcheckPanics []*Value) {
 	}
 
 	loopStartMem := startMem[loop.header.ID]
-	if loopStartMem.Op == OpPhi {
+	if loopStartMem == nil {
+		panic("Why")
+	} else if loopStartMem.Op == OpPhi {
 		for idx, pred := range loop.header.Preds {
 			if pred.b == loop.latch {
 				loopStartMem.SetArg(1-idx, lastMem)
@@ -426,7 +431,7 @@ func fixMemoryState(loop *loop, startMem, endMem, bcheckPanics []*Value) {
 			}
 		}
 	} else {
-		panic("can not imagine now")
+		loop.header.replaceUses(loopStartMem, lastMem)
 	}
 
 	for _, bp := range bcheckPanics {
@@ -439,7 +444,7 @@ func fixMemoryState(loop *loop, startMem, endMem, bcheckPanics []*Value) {
 // licm stands for Loop Invariant Code Motion, it hoists expressions that computes
 // the same value while has no effect outside loop
 func licm(f *Func) {
-	if f.Name != "whatthefuck" {
+	if f.Name != "onePassCopy" {
 		return
 	}
 
