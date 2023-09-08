@@ -78,7 +78,8 @@ func computeMemState(f *Func) ([]*Value, []*Value) {
 
 func isMemoryDef(val *Value) bool {
 	switch val.Op {
-	case OpStore, OpMove, OpZero, OpStoreWB, OpMoveWB, OpZeroWB:
+	case OpStore, OpMove, OpZero, OpStoreWB, OpMoveWB, OpZeroWB,
+		OpVarDef, OpVarLive, OpKeepAlive:
 		return true
 	}
 	return false
@@ -199,7 +200,9 @@ func tryHoist(fn *Func, loop *loop, li *loopInvariants, val *Value) bool {
 	// we try to hoist its arguments first
 	for _, arg := range val.Args {
 		if arg.Type.IsMemory() {
-			continue
+			if !isMemoryDef(arg) {
+				continue
+			}
 		}
 		if _, exist := li.invariants[arg]; exist {
 			// If arguments of loop invariant does not dominate the loop, try to
