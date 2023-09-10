@@ -287,11 +287,16 @@ func (h *hoister) hoistBoundCheck(loop *loop, bcheck *Value) {
 // Value is considered as loop invariant if all its inputs are defined outside the loop
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
+// baseline complex 3746, simple 69389, bound check 89
 func (h *hoister) tryHoist(loop *loop, li *loopInvariants, val *Value) bool {
-	sdom := h.fn.Sdom()
-	// arguments of val are all loop invariant, but they are not necessarily
-	// hoistable due to various constraints, for example, memory alias, so
-	// we try to hoist its arguments first
+	sdom := h.sdom
+	// If Value is already hosited, do nothing then
+	if sdom.isAncestor(val.Block, loop.header) {
+		return true
+	}
+
+	// Try to hoist arguments of val, they are guaranteed to be loop invariants
+	// but not necessarily hoistable
 	for _, arg := range val.Args {
 		if arg.Type.IsMemory() {
 			// TODO: RETHINK ABOUT THIS
@@ -311,11 +316,6 @@ func (h *hoister) tryHoist(loop *loop, li *loopInvariants, val *Value) bool {
 			assert(arg.Type.IsMemory() || sdom.IsAncestorEq(arg.Block, loop.header),
 				"must define outside loop")
 		}
-	}
-
-	// If Value is already hosited, do nothing then
-	if sdom.isAncestor(val.Block, loop.header) {
-		return true
 	}
 
 	if isHoistableBoundCheck(val) {
