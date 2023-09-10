@@ -526,6 +526,7 @@ func licm(f *Func) {
 		if li == nil || len(li.invariants) == 0 {
 			continue
 		}
+		b2li[loop] = li
 
 		// Rotate the loop, it creates a home for hoistable Values
 		if f.RotateLoop(loop) {
@@ -533,7 +534,6 @@ func licm(f *Func) {
 				f.Fatalf("Can not create loop land for %v", loop.LongString())
 			}
 
-			b2li[loop] = li
 			// First iteration to simplifiy CFG by hoisting bound check earlier
 			for _, val := range li.stableKeys() {
 				h.tryHoist(loop, li, val)
