@@ -42,7 +42,6 @@ type loopInvariants struct {
 type hoister struct {
 	fn         *Func
 	panicExits map[*Block]bool
-	sdom       SparseTree
 }
 
 func (li *loopInvariants) stableKeys() []*Value {
@@ -289,7 +288,8 @@ func (h *hoister) hoistBoundCheck(loop *loop, bcheck *Value) {
 // to dominator block of loop, the first rule actually already implies the second rule
 // baseline complex 3746, simple 69389, bound check 89
 func (h *hoister) tryHoist(loop *loop, li *loopInvariants, val *Value) bool {
-	sdom := h.sdom
+	// Rebuild dominator tree since CFG simplifications invalidate old one
+	sdom := h.fn.Sdom()
 	// If Value is already hosited, do nothing then
 	if sdom.isAncestor(val.Block, loop.header) {
 		return true
@@ -446,7 +446,7 @@ func (loop *loop) findInvariant(ln *loopnest) *loopInvariants {
 }
 
 func (h *hoister) fixMemoryState(loop *loop, startMem, endMem []*Value) {
-	entry := h.sdom.Parent(loop.header)
+	entry := h.fn.Sdom().Parent(loop.guard)
 	lastMem := endMem[entry.ID]
 
 	oldLastMem := lastMem
@@ -517,7 +517,6 @@ func licm(f *Func) {
 	h := &hoister{
 		fn:         f,
 		panicExits: make(map[*Block]bool),
-		sdom:       f.Sdom(),
 	}
 
 	for _, loop := range loopnest.loops {
@@ -539,26 +538,6 @@ func licm(f *Func) {
 			}
 		}
 	}
-
-	// if len(h.bcheckPanics) != 0 {
-	// 	// Loop exist is hoisted, rebuild the whole loopnest here
-	// 	oldLoops := loopnest.loops
-	// 	loopnest = loopnestfor(f)
-	// 	loopnest.findExits() // alwaysExecute relies on this
-	// 	// TODO: O(N^2)
-	// 	for _, loop := range loopnest.loops {
-	// 		for _, loopx := range oldLoops {
-	// 			if loopx.header == loop.header {
-	// 				loop.exit = loopx.exit
-	// 				loop.guard = loopx.guard
-	// 				loop.latch = loopx.latch
-	// 				loop.body = loopx.body
-	// 				loop.land = loopx.land
-	// 				break
-	// 			}
-	// 		}
-	// 	}
-	// }
 
 	// Run second iteration because first iteration may reveals extra loop
 	// invariants due to CFG simplification
