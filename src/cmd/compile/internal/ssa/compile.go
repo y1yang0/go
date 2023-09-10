@@ -483,6 +483,7 @@ var passes = [...]pass{
 	{name: "late fuse", fn: fuseLate},
 	{name: "dse", fn: dse},
 	{name: "memcombine", fn: memcombine},
+	// {name: "looprotate_test", fn: looprotatetest},
 	{name: "loop invariant code motion", fn: licm},           // TODO: WHY WRITE BARRIER CRASH???
 	{name: "writebarrier", fn: writebarrier, required: true}, // expand write barrier ops
 	{name: "insert resched checks", fn: insertLoopReschedChecks,
