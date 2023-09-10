@@ -164,7 +164,7 @@ func alwaysExecute(sdom SparseTree, loop *loop, panicExits map[*Block]bool, val 
 	return true
 }
 
-func isHoistable(val *Value) bool {
+func isCandidate(val *Value) bool {
 	assert(!canSpeculativelyExecuteValue(val), "sanity check")
 	if isDivMod(val.Op) || isPtrArithmetic(val.Op) {
 		return true
@@ -343,7 +343,7 @@ func (h *hoister) tryHoist(loop *loop, li *loopInvariants, val *Value) bool {
 	// prerequisites even if value can not be speculatively executed
 	if rotated {
 		// Instructions are selected ones?
-		if !isHoistable(val) {
+		if !isCandidate(val) {
 			fmt.Printf("==not_hoistable %v\n", val.LongString())
 			return false
 		}
@@ -402,6 +402,8 @@ func (loop *loop) findInvariant(ln *loopnest) *loopInvariants {
 				// alias analysis in advance to get such facts, that some what
 				// heavy for this pass at present, so we give up further motion
 				// once loop blocks involve Calls
+				// TODO: For intrinsic functions, we know their behaviors they
+				// can be special processed in the future.
 				return nil
 			}
 
@@ -513,7 +515,7 @@ func licm(f *Func) {
 	}
 
 	startMem, endMem := computeMemState(f)
-	b2li := make(map[ID]*loopInvariants)
+	b2li := make(map[*loop]*loopInvariants)
 	h := &hoister{
 		fn:         f,
 		panicExits: make(map[*Block]bool),
@@ -524,7 +526,6 @@ func licm(f *Func) {
 		if li == nil || len(li.invariants) == 0 {
 			continue
 		}
-		b2li[loop.header.ID] = li
 
 		// Rotate the loop, it creates a home for hoistable Values
 		if f.RotateLoop(loop) {
@@ -532,6 +533,7 @@ func licm(f *Func) {
 				f.Fatalf("Can not create loop land for %v", loop.LongString())
 			}
 
+			b2li[loop] = li
 			// First iteration to simplifiy CFG by hoisting bound check earlier
 			for _, val := range li.stableKeys() {
 				h.tryHoist(loop, li, val)
@@ -541,15 +543,15 @@ func licm(f *Func) {
 
 	// Run second iteration because first iteration may reveals extra loop
 	// invariants due to CFG simplification
-	for id, loop := range loopnest.b2l {
-		if li, exist := b2li[ID(id)]; exist {
-			vals := li.stableKeys() // To avoid compilation stale
-			fmt.Printf("Loop Invariants %v\n", vals)
-			for _, val := range vals {
+	for _, loop := range loopnest.loops {
+		if li, exist := b2li[loop]; exist {
+			keys := li.stableKeys()
+			fmt.Printf("Loop Invariants %v\n", keys)
+			for _, val := range keys {
 				h.tryHoist(loop, li, val)
 			}
 
-			// Respect memory SSA subgraph, fix broken memory state
+			// At this point, the CFG shape is fixed, we should fix broken memory state
 			if loop.IsRotatedForm() {
 				h.fixMemoryState(loop, startMem, endMem)
 			}
