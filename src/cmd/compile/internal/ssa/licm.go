@@ -56,7 +56,7 @@ func (li *loopInvariants) stableKeys() []*Value {
 }
 
 func printInvariant(val *Value, block *Block, domBlock *Block) {
-	fmt.Printf("== Hoist %v from b%v to b%v in %v\n",
+	fmt.Printf("Hoist %v from b%v to b%v in %v\n",
 		val.String(),
 		block.ID, domBlock.ID, block.Func.Name)
 	fmt.Printf("  %v\n", val.LongString())
@@ -106,7 +106,7 @@ func hasMemoryAlias(loads []*Value, stores []*Value, val *Value) bool {
 			storePtr := st.Args[0]
 			at := GetMemoryAlias(loadPtr, storePtr)
 			if at != NoAlias {
-				fmt.Printf("==%v %v with %v in %v\n", at, loadPtr.LongString(), storePtr.LongString(), val.Block.Func.Name)
+				//fmt.Printf("Alias: %v %v with %v in %v\n", at, loadPtr.LongString(), storePtr.LongString(), val.Block.Func.Name)
 				return true
 			}
 		}
@@ -123,7 +123,7 @@ func hasMemoryAlias(loads []*Value, stores []*Value, val *Value) bool {
 			storePtr := val.Args[0]
 			at := GetMemoryAlias(ptr, storePtr)
 			if at != NoAlias {
-				fmt.Printf("==%v %v with %v in %v\n", at, ptr.LongString(), storePtr.LongString(), val.Block.Func.Name)
+				//fmt.Printf("Alias: %v %v with %v in %v\n", at, ptr.LongString(), storePtr.LongString(), val.Block.Func.Name)
 				return true
 			}
 		}
@@ -164,14 +164,14 @@ func alwaysExecute(sdom SparseTree, loop *loop, panicExits map[*Block]bool, val 
 	return true
 }
 
-func isHoistable(val *Value) bool {
+func isCandidate(val *Value) bool {
 	assert(!canSpeculativelyExecuteValue(val), "sanity check")
 	if isDivMod(val.Op) || isPtrArithmetic(val.Op) {
 		return true
 	}
 	// The protagonist of the whole story
 	switch val.Op {
-	case OpLoad, OpStore, OpNilCheck:
+	case OpLoad, OpStore, OpNilCheck, OpGetG:
 		return true
 	}
 	return false
@@ -215,14 +215,13 @@ func (h *hoister) hoist(block *Block, val *Value) {
 }
 
 // Hoist the loop-invariant panic check to loop land after rotation
-// This simplifies CFG and allow more Value be hosited
+// This simplifies CFG and allows more Values be hosited
 //
 //	                                               loop guard
-//	                                                ╱      ╲
-//	                                           loop land    ╲
-//	                                              ╱          ╲
-//	                                        new bound check*  ╲
-//	       loop header                          ╱    ╲        ╱
+//	                                                ╱     ╲
+//	                                           loop land   ╲
+//	                                             ╱          ╲
+//	       loop header                      new bound check* ╲
 //	        ╱   ▲   ╲                          ╱      ╲      ╱
 //	       ╱     ╲   ╲                    loop header panic ╱
 //	  bound check ╲  loop exit     =>       ╱   ▲      ____╱
@@ -232,11 +231,6 @@ func (h *hoister) hoist(block *Block, val *Value) {
 //	                                          │    ╱
 //	                                        loop exit
 func (h *hoister) hoistBoundCheck(loop *loop, bcheck *Value) {
-	fn := h.fn
-	if !loop.CreateLoopLand(fn) {
-		return
-	}
-
 	var panicExit *Block
 	bcheckBlock := bcheck.Block
 	for bi, succ := range bcheckBlock.Succs {
@@ -261,7 +255,7 @@ func (h *hoister) hoistBoundCheck(loop *loop, bcheck *Value) {
 			tail := loop.header
 			head := tail.Preds[0].b
 			assert(head != loop.guard, "where is your loop land")
-			block := fn.NewBlock(BlockIf)
+			block := h.fn.NewBlock(BlockIf)
 			block.Likely = bcheckBlock.Likely
 			block.Pos = bcheckBlock.Pos
 			moveTo(bcheck, block)
@@ -286,7 +280,11 @@ func (h *hoister) hoistBoundCheck(loop *loop, bcheck *Value) {
 // Value is considered as loop invariant if all its inputs are defined outside the loop
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
+//
 // baseline complex 3746, simple 69389, bound check 89
+// v1       complex 3801, simple 8795, bound check 23
+// v2       complex 4364, simple 8839, bound check 23
+// v3(getg) complex 4399, simple 8839, bound check 23
 func (h *hoister) tryHoist(loop *loop, li *loopInvariants, val *Value) bool {
 	// Rebuild dominator tree since CFG simplifications invalidate old one
 	sdom := h.fn.Sdom()
@@ -318,54 +316,48 @@ func (h *hoister) tryHoist(loop *loop, li *loopInvariants, val *Value) bool {
 		}
 	}
 
+	if !loop.IsRotatedForm() {
+		return false
+	}
+
+	// Hoist the entire bound check to loop land after rotation
 	if isHoistableBoundCheck(val) {
 		h.hoistBoundCheck(loop, val)
-		fmt.Printf("==Hoist bound check %v\n", val)
+		fmt.Printf("Hoist bound check %v\n", val)
 		return true
 	}
 
-	rotated := loop.IsRotatedForm()
-
-	// Hoist value to loop entry if it can be speculatively executed
+	// This catches most common case, e.g. arithmetic, bit operation, etc.
 	if canSpeculativelyExecuteValue(val) {
 		assert(val.MemoryArg() == nil, "sanity check")
-		entry := sdom.Parent(loop.header)
-		targetBlock := entry
-		if rotated {
-			targetBlock = loop.land
-		}
-		h.hoist(targetBlock, val)
-		fmt.Printf("==HoistSimple %v to %v\n", val.LongString(), targetBlock)
+		h.hoist(loop.land, val)
+		fmt.Printf("HoistSimple %v\n", val.LongString())
 		return true
 	}
 
 	// Dont worry, there are one more change for them to be hoisted under few
 	// prerequisites even if value can not be speculatively executed
-	if rotated {
-		// Instructions are selected ones?
-		if !isHoistable(val) {
-			fmt.Printf("==not_hoistable %v\n", val.LongString())
-			return false
-		}
-
-		// Instructions are guaranteed to execute unconditionally?
-		if !alwaysExecute(sdom, loop, h.panicExits, val) {
-			fmt.Printf("==not execute unconditional%v\n", val.LongString())
-			return false
-		}
-
-		// Instructions may access same memory locations?
-		if hasMemoryAlias(li.loads, li.stores, val) {
-			fmt.Printf("==has mem alias%v\n", val)
-			return false
-		}
-
-		h.hoist(loop.land, val)
-		fmt.Printf("==HoistComplex %v to %v\n", val.LongString(), loop.land)
-		return true
+	// Instructions are selected ones?
+	if !isCandidate(val) {
+		fmt.Printf("!not_hoistable %v\n", val.LongString())
+		return false
 	}
 
-	return false
+	// Instructions are guaranteed to execute unconditionally?
+	if !alwaysExecute(sdom, loop, h.panicExits, val) {
+		fmt.Printf("!not execute unconditional%v\n", val.LongString())
+		return false
+	}
+
+	// Instructions may access same memory locations?
+	if hasMemoryAlias(li.loads, li.stores, val) {
+		fmt.Printf("!has mem alias%v\n", val)
+		return false
+	}
+
+	h.hoist(loop.land, val)
+	fmt.Printf("HoistComplex %v to %v\n", val.LongString(), loop.land)
+	return true
 }
 
 func (loop *loop) findInvariant(ln *loopnest) *loopInvariants {
@@ -389,53 +381,50 @@ func (loop *loop) findInvariant(ln *loopnest) *loopInvariants {
 			continue
 		}
 
-		for _, value := range block.Values {
-			if value.Op == OpLoad {
-				loads = append(loads, value)
-			} else if value.Op == OpStore {
-				stores = append(stores, value)
-			} else if value.Op.IsCall() {
-				// bail out the compilation if too complicated, for example, loop
-				// involves Calls. Theoretically we can hoist Call as long as it
-				// does not impose any observable side effects, e.g. only reads
-				// memory or dont access memory at all, but unfortunate we may run
-				// alias analysis in advance to get such facts, that some what
-				// heavy for this pass at present, so we give up further motion
-				// once loop blocks involve Calls
-				return nil
-			}
+		changed := true
+		first := true
+		for changed {
+			numInvar := len(invariants)
+			for _, value := range block.Values {
+				if first {
+					if value.Op == OpLoad {
+						loads = append(loads, value)
+					} else if value.Op == OpStore {
+						stores = append(stores, value)
+					} else if value.Op.IsCall() {
+						// bail out the compilation if too complicated, for example, loop
+						// involves Calls. Theoretically we can hoist Call as long as it
+						// does not impose any observable side effects, e.g. only reads
+						// memory or dont access memory at all, but unfortunate we may run
+						// alias analysis in advance to get such facts, that some what
+						// heavy for this pass at present, so we give up further motion
+						// once loop blocks involve Calls
+						// TODO: For intrinsic functions, we know their behaviors they
+						// can be special processed in the future.
+						return nil
+					}
+				}
 
-			isInvariant := true
-			for _, use := range value.Args {
-				if use.Type.IsMemory() {
-					// Store Load and other memory value depends on memory value, which is usually represented
-					// as the non-loop-invariant memory value, for example, a memory Phi
-					// in loops, but this is not true semantically. We need to treat these
-					// kind of Store specifically as loop invariants.
-					//
-					//      v4, v5.... ;; loop invariant
-					// 	cond:
-					// 		v2 = Phi <mem> v1 v3
-					//      v6 = ...
-					// 	BlockIf v6 body, exit
-					//
-					//  body:
-					//		v3 (15) = Store <mem> v4 v5 v2
-					//  exit:
-					// discard last memory value
-					continue
+				isInvariant := true
+				for _, use := range value.Args {
+					if use.Type.IsMemory() {
+						// Discard last memory value
+						continue
+					}
+					if _, exist := invariants[use]; exist {
+						continue
+					}
+					if _, exist := loopValues[use]; exist {
+						isInvariant = false
+						break
+					}
 				}
-				if _, exist := invariants[use]; exist {
-					continue
-				}
-				if _, exist := loopValues[use]; exist {
-					isInvariant = false
-					break
+				if isInvariant {
+					invariants[value] = true
 				}
 			}
-			if isInvariant {
-				invariants[value] = true
-			}
+			first = false
+			changed = (len(invariants) != numInvar)
 		}
 	}
 	return &loopInvariants{
@@ -503,7 +492,7 @@ func looprotatetest(f *Func) {
 // licm stands for Loop Invariant Code Motion, it hoists expressions that computes
 // the same value outside loop
 func licm(f *Func) {
-	// if f.Name != "ArrayOf" {
+	// if f.Name != "stealWork" {
 	// 	return
 	// }
 
@@ -513,18 +502,15 @@ func licm(f *Func) {
 	}
 
 	startMem, endMem := computeMemState(f)
-	b2li := make(map[ID]*loopInvariants)
 	h := &hoister{
 		fn:         f,
 		panicExits: make(map[*Block]bool),
 	}
-
 	for _, loop := range loopnest.loops {
 		li := loop.findInvariant(loopnest)
 		if li == nil || len(li.invariants) == 0 {
 			continue
 		}
-		b2li[loop.header.ID] = li
 
 		// Rotate the loop, it creates a home for hoistable Values
 		if f.RotateLoop(loop) {
@@ -532,27 +518,21 @@ func licm(f *Func) {
 				f.Fatalf("Can not create loop land for %v", loop.LongString())
 			}
 
-			// First iteration to simplifiy CFG by hoisting bound check earlier
-			for _, val := range li.stableKeys() {
-				h.tryHoist(loop, li, val)
+			// Run first iteration to simplifiy CFG by hoisting bound check
+			// Run second iteration because first iteration may reveals extra
+			// loop invariants(if happens)
+			keys := li.stableKeys()
+			for iter := 0; iter < 2; iter++ {
+				fmt.Printf("== Run LICM Iter%d: %v %v %v\n", iter, keys, f.Name, loop.LongString())
+				for _, val := range keys {
+					h.tryHoist(loop, li, val)
+				}
+				if len(h.panicExits) == 0 {
+					break
+				}
 			}
-		}
-	}
-
-	// Run second iteration because first iteration may reveals extra loop
-	// invariants due to CFG simplification
-	for id, loop := range loopnest.b2l {
-		if li, exist := b2li[ID(id)]; exist {
-			vals := li.stableKeys() // To avoid compilation stale
-			fmt.Printf("Loop Invariants %v\n", vals)
-			for _, val := range vals {
-				h.tryHoist(loop, li, val)
-			}
-
-			// Respect memory SSA subgraph, fix broken memory state
-			if loop.IsRotatedForm() {
-				h.fixMemoryState(loop, startMem, endMem)
-			}
+			// At this point, the loop CFG shape is fixed, fix broken memory state
+			h.fixMemoryState(loop, startMem, endMem)
 		}
 	}
 }
