@@ -335,8 +335,8 @@ func (loop *loop) rewireLoopGuard(sdom SparseTree, guardCond *Value) {
 // loopGuard -> loopHeader(0), loopExit(1)
 func (loop *loop) createLoopGuard(fn *Func, cond *Value) {
 	// Create loop guard block
-	// TODO: Loop guard can be skipped if original loop form already exists such
-	// form. e.g. if 0 < len(b) { for i := 0; i < len(b); i++ {...} }
+	// TODO(yyang): Creation of loop guard can be skipped if original IR already
+	// exists such form. e.g. if 0 < len(b) { for i := 0; i < len(b); i++ {...} }
 	loopGuard := fn.NewBlock(BlockIf)
 	loop.guard = loopGuard
 	sdom := fn.Sdom()
@@ -569,14 +569,14 @@ func (fn *Func) RotateLoop(loop *loop) bool {
 
 	// Try to build loop form and bail out if failure
 	if msg := loop.buildLoopForm(fn); msg != "" {
-		fmt.Printf("Bad %v for rotation: %s %v\n", loop.LongString(), msg, fn.Name)
+		//fmt.Printf("Bad %v for rotation: %s %v\n", loop.LongString(), msg, fn.Name)
 		return false
 	}
 
 	// Collect all use blocks that depend on Value defined inside loop
 	defUses, bailout := loop.collectLoopUse(fn)
 	if bailout {
-		fmt.Printf("Bad %v for rotation: use bad %v\n", loop.LongString(), fn.Name)
+		//fmt.Printf("Bad %v for rotation: use bad %v\n", loop.LongString(), fn.Name)
 		return false
 	}
 
@@ -601,7 +601,7 @@ func (fn *Func) RotateLoop(loop *loop) bool {
 	// Gosh, loop is rotated
 	loop.verifyRotatedForm()
 
-	fmt.Printf("%v rotated in %v\n", loop.LongString(), fn.Name)
+	//fmt.Printf("%v rotated in %v\n", loop.LongString(), fn.Name)
 	return true
 }
 
