@@ -601,7 +601,7 @@ func (fn *Func) RotateLoop(loop *loop) bool {
 	// Gosh, loop is rotated
 	loop.verifyRotatedForm()
 
-	//fmt.Printf("%v rotated in %v\n", loop.LongString(), fn.Name)
+	fmt.Printf("%v rotated in %v\n", loop.LongString(), fn.Name)
 	return true
 }
 

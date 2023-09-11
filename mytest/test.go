@@ -2,15 +2,31 @@ package main
 
 // /// loop roate
 
+var t [256]byte
+
+func whatthefuck(b *[16]byte) {
+	for i, v := range b {
+		b[i] = t[v]
+	}
+}
+
+var g = []int{3, 6, 7, 7, 4, 43, 7, 2}
+
+func whatthefuck3121(cnt int) {
+	for i := 0; i < cnt; i++ {
+		g[3] = 5
+	}
+}
+
 //go:noinline
-func whatthefuck(t1 []int8, t2 []int) int {
+func whatthefuck0000(t1 []int8, t2 []int) int {
 	r := 0
 	for i := 0; i <= 128; i++ {
 		// t1[3] = 5
 		r += t2[2]
 		t2[1] = 33
 		t2[3] = 44
-		t2[i%2] = 0
+		// t2[i%2] = 0
 	}
 	return r
 }
@@ -183,9 +199,10 @@ func whatthefuck111(x, y, z int) int {
 }
 
 func main() {
-	tx := []int8{3, 3, 5, 5}
-	tx1 := []int{3, 3, 5, 5}
-	whatthefuck(tx, tx1)
+	// tx := []int8{3, 3, 5, 5}
+	// tx1 := []int{3, 3, 5, 5}
+	// a := [16]byte{}
+	// whatthefuck(tx, tx1)
 	// whatthefuck("aaaa", 3)
 	// whatthefuck(3, 5, 62)
 	// whatthefuck(12345*1000000000+54321, 1000000000, &e)

@@ -171,7 +171,7 @@ func isCandidate(val *Value) bool {
 	}
 	// The protagonist of the whole story
 	switch val.Op {
-	case OpLoad, OpStore, OpNilCheck:
+	case OpLoad, OpStore, OpNilCheck, OpGetG:
 		return true
 	}
 	return false
@@ -284,6 +284,7 @@ func (h *hoister) hoistBoundCheck(loop *loop, bcheck *Value) {
 // baseline complex 3746, simple 69389, bound check 89
 // v1       complex 3801, simple 8795, bound check 23
 // v2       complex 4364, simple 8839, bound check 23
+// v3(getg) complex 4399, simple 8839, bound check 23
 func (h *hoister) tryHoist(loop *loop, li *loopInvariants, val *Value) bool {
 	// Rebuild dominator tree since CFG simplifications invalidate old one
 	sdom := h.fn.Sdom()
@@ -491,7 +492,7 @@ func looprotatetest(f *Func) {
 // licm stands for Loop Invariant Code Motion, it hoists expressions that computes
 // the same value outside loop
 func licm(f *Func) {
-	// if f.Name != "cleanupOnePass" {
+	// if f.Name != "stealWork" {
 	// 	return
 	// }
 
