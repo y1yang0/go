@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog/internal/buffer"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -436,6 +435,62 @@ func TestJSONAndTextHandlers(t *testing.T) {
 			wantText: `time.mins=3 time.secs=2 msg=message`,
 			wantJSON: `{"time":{"mins":3,"secs":2},"msg":"message"}`,
 		},
+		{
+			name: "replace empty 1",
+			with: func(h Handler) Handler {
+				return h.WithGroup("g").WithAttrs([]Attr{Int("a", 1)})
+			},
+			replace:  func([]string, Attr) Attr { return Attr{} },
+			attrs:    []Attr{Group("h", Int("b", 2))},
+			wantText: "",
+			wantJSON: `{"g":{"h":{}}}`,
+		},
+		{
+			name: "replace empty 2",
+			with: func(h Handler) Handler {
+				return h.WithGroup("g").WithAttrs([]Attr{Int("a", 1)}).WithGroup("h").WithAttrs([]Attr{Int("b", 2)})
+			},
+			replace:  func([]string, Attr) Attr { return Attr{} },
+			attrs:    []Attr{Group("i", Int("c", 3))},
+			wantText: "",
+			wantJSON: `{"g":{"h":{"i":{}}}}`,
+		},
+		{
+			name: "replace partial empty attrs 1",
+			with: func(h Handler) Handler {
+				return h.WithGroup("g").WithAttrs([]Attr{Int("a", 1)}).WithGroup("h").WithAttrs([]Attr{Int("b", 2)})
+			},
+			replace: func(groups []string, attr Attr) Attr {
+				return removeKeys(TimeKey, LevelKey, MessageKey, "a")(groups, attr)
+			},
+			attrs:    []Attr{Group("i", Int("c", 3))},
+			wantText: "g.h.b=2 g.h.i.c=3",
+			wantJSON: `{"g":{"h":{"b":2,"i":{"c":3}}}}`,
+		},
+		{
+			name: "replace partial empty attrs 2",
+			with: func(h Handler) Handler {
+				return h.WithGroup("g").WithAttrs([]Attr{Int("a", 1)}).WithAttrs([]Attr{Int("n", 4)}).WithGroup("h").WithAttrs([]Attr{Int("b", 2)})
+			},
+			replace: func(groups []string, attr Attr) Attr {
+				return removeKeys(TimeKey, LevelKey, MessageKey, "a", "b")(groups, attr)
+			},
+			attrs:    []Attr{Group("i", Int("c", 3))},
+			wantText: "g.n=4 g.h.i.c=3",
+			wantJSON: `{"g":{"n":4,"h":{"i":{"c":3}}}}`,
+		},
+		{
+			name: "replace partial empty attrs 3",
+			with: func(h Handler) Handler {
+				return h.WithGroup("g").WithAttrs([]Attr{Int("x", 0)}).WithAttrs([]Attr{Int("a", 1)}).WithAttrs([]Attr{Int("n", 4)}).WithGroup("h").WithAttrs([]Attr{Int("b", 2)})
+			},
+			replace: func(groups []string, attr Attr) Attr {
+				return removeKeys(TimeKey, LevelKey, MessageKey, "a", "c")(groups, attr)
+			},
+			attrs:    []Attr{Group("i", Int("c", 3))},
+			wantText: "g.x=0 g.n=4 g.h.b=2",
+			wantJSON: `{"g":{"x":0,"n":4,"h":{"b":2,"i":{}}}}`,
+		},
 	} {
 		r := NewRecord(testTime, LevelInfo, "message", callerPC(2))
 		line := strconv.Itoa(r.source().Line)
@@ -603,11 +658,8 @@ func TestWriteTimeRFC3339(t *testing.T) {
 		time.Date(2000, 1, 2, 3, 4, 5, 400, time.Local),
 		time.Date(2000, 11, 12, 3, 4, 500, 5e7, time.UTC),
 	} {
+		got := string(appendRFC3339Millis(nil, tm))
 		want := tm.Format(rfc3339Millis)
-		buf := buffer.New()
-		defer buf.Free()
-		writeTimeRFC3339Millis(buf, tm)
-		got := buf.String()
 		if got != want {
 			t.Errorf("got %s, want %s", got, want)
 		}
@@ -615,12 +667,10 @@ func TestWriteTimeRFC3339(t *testing.T) {
 }
 
 func BenchmarkWriteTime(b *testing.B) {
-	buf := buffer.New()
-	defer buf.Free()
 	tm := time.Date(2022, 3, 4, 5, 6, 7, 823456789, time.Local)
 	b.ResetTimer()
+	var buf []byte
 	for i := 0; i < b.N; i++ {
-		writeTimeRFC3339Millis(buf, tm)
-		buf.Reset()
+		buf = appendRFC3339Millis(buf[:0], tm)
 	}
 }

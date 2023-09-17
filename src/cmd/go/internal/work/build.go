@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"go/build"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -76,14 +75,15 @@ and test commands:
 		linux/ppc64le and linux/arm64 (only for 48-bit VMA).
 	-msan
 		enable interoperation with memory sanitizer.
-		Supported only on linux/amd64, linux/arm64, freebsd/amd64
+		Supported only on linux/amd64, linux/arm64, linux/loong64, freebsd/amd64
 		and only with Clang/LLVM as the host C compiler.
 		PIE build mode will be used on all platforms except linux/amd64.
 	-asan
 		enable interoperation with address sanitizer.
-		Supported only on linux/arm64, linux/amd64.
-		Supported only on linux/amd64 or linux/arm64 and only with GCC 7 and higher
+		Supported only on linux/arm64, linux/amd64, linux/loong64.
+		Supported on linux/amd64 or linux/arm64 and only with GCC 7 and higher
 		or Clang/LLVM 9 and higher.
+		And supported on linux/loong64 only with Clang/LLVM 16 and higher.
 	-cover
 		enable code coverage instrumentation.
 	-covermode set,count,atomic
@@ -898,7 +898,7 @@ func FindExecCmd() []string {
 	if cfg.Goos == runtime.GOOS && cfg.Goarch == runtime.GOARCH {
 		return ExecCmd
 	}
-	path, err := exec.LookPath(fmt.Sprintf("go_%s_%s_exec", cfg.Goos, cfg.Goarch))
+	path, err := cfg.LookPath(fmt.Sprintf("go_%s_%s_exec", cfg.Goos, cfg.Goarch))
 	if err == nil {
 		ExecCmd = []string{path}
 	}

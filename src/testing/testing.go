@@ -398,7 +398,7 @@ var initRan bool
 // the "go test" command before running test functions, so Init is only needed
 // when calling functions such as Benchmark without using "go test".
 //
-// Init has no effect if it was already called.
+// Init is not safe to call concurrently. It has no effect if it was already called.
 func Init() {
 	if initRan {
 		return
@@ -771,9 +771,7 @@ func (c *common) decorate(s string, skip int) string {
 	if file != "" {
 		if *fullPath {
 			// If relative path, truncate file name at last file name separator.
-		} else if index := strings.LastIndex(file, "/"); index >= 0 {
-			file = file[index+1:]
-		} else if index = strings.LastIndex(file, "\\"); index >= 0 {
+		} else if index := strings.LastIndexAny(file, `/\`); index >= 0 {
 			file = file[index+1:]
 		}
 	} else {

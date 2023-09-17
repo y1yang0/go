@@ -67,6 +67,7 @@ var cleantests = []PathTest{
 	{"/abc/def/../../..", "/"},
 	{"abc/def/../../../ghi/jkl/../../../mno", "../../mno"},
 	{"/../abc", "/abc"},
+	{"a/../b:/../../c", `../c`},
 
 	// Combinations
 	{"abc/./../def", "def"},
@@ -89,6 +90,7 @@ var wincleantests = []PathTest{
 	{`c:\abc\def\..\..`, `c:\`},
 	{`c:\..\abc`, `c:\abc`},
 	{`c:..\abc`, `c:..\abc`},
+	{`c:\b:\..\..\..\d`, `c:\d`},
 	{`\`, `\`},
 	{`/`, `\`},
 	{`\\i\..\c$`, `\\i\..\c$`},
@@ -169,6 +171,7 @@ var islocaltests = []IsLocalTest{
 	{"a/", true},
 	{"a/.", true},
 	{"a/./b/./c", true},
+	{`a/../b:/../../c`, false},
 }
 
 var winislocaltests = []IsLocalTest{
@@ -380,6 +383,7 @@ var winjointests = []JoinTest{
 	{[]string{`\\a`, `b`, `c`}, `\\a\b\c`},
 	{[]string{`\\a\`, `b`, `c`}, `\\a\b\c`},
 	{[]string{`//`, `a`}, `\\a`},
+	{[]string{`a:\b\c`, `x\..\y:\..\..\z`}, `a:\b\z`},
 }
 
 func TestJoin(t *testing.T) {
@@ -556,23 +560,10 @@ func tempDirCanonical(t *testing.T) string {
 func TestWalk(t *testing.T) {
 	walk := func(root string, fn fs.WalkDirFunc) error {
 		return filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
-			return fn(path, &statDirEntry{info}, err)
+			return fn(path, fs.FileInfoToDirEntry(info), err)
 		})
 	}
 	testWalk(t, walk, 1)
-}
-
-type statDirEntry struct {
-	info fs.FileInfo
-}
-
-func (d *statDirEntry) Name() string               { return d.info.Name() }
-func (d *statDirEntry) IsDir() bool                { return d.info.IsDir() }
-func (d *statDirEntry) Type() fs.FileMode          { return d.info.Mode().Type() }
-func (d *statDirEntry) Info() (fs.FileInfo, error) { return d.info, nil }
-
-func (d *statDirEntry) String() string {
-	return fs.FormatDirEntry(d)
 }
 
 func TestWalkDir(t *testing.T) {

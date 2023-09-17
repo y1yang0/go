@@ -261,7 +261,7 @@ func (p *Profile) processprofileGraph(g *graph.Graph) error {
 // of a package.
 func (p *Profile) initializeIRGraph() {
 	// Bottomup walk over the function to create IRGraph.
-	ir.VisitFuncsBottomUp(typecheck.Target.Decls, func(list []*ir.Func, recursive bool) {
+	ir.VisitFuncsBottomUp(typecheck.Target.Funcs, func(list []*ir.Func, recursive bool) {
 		for _, fn := range list {
 			p.VisitIR(fn)
 		}
@@ -351,12 +351,6 @@ func (p *Profile) addIREdge(callerNode *IRNode, callerName string, call ir.Node,
 
 // addIndirectEdges adds indirect call edges found in the profile to the graph,
 // to be used for devirtualization.
-//
-// targetDeclFuncs is the set of functions in typecheck.Target.Decls. Only
-// edges from these functions will be added.
-//
-// Devirtualization is only applied to typecheck.Target.Decls functions, so there
-// is no need to add edges from other functions.
 //
 // N.B. despite the name, addIndirectEdges will add any edges discovered via
 // the profile. We don't know for sure that they are indirect, but assume they
@@ -467,7 +461,7 @@ func (p *Profile) PrintWeightedCallGraphDOT(edgeThreshold float64) {
 
 	// List of functions in this package.
 	funcs := make(map[string]struct{})
-	ir.VisitFuncsBottomUp(typecheck.Target.Decls, func(list []*ir.Func, recursive bool) {
+	ir.VisitFuncsBottomUp(typecheck.Target.Funcs, func(list []*ir.Func, recursive bool) {
 		for _, f := range list {
 			name := ir.LinkFuncName(f)
 			funcs[name] = struct{}{}
@@ -511,7 +505,7 @@ func (p *Profile) PrintWeightedCallGraphDOT(edgeThreshold float64) {
 		}
 	}
 	// Print edges.
-	ir.VisitFuncsBottomUp(typecheck.Target.Decls, func(list []*ir.Func, recursive bool) {
+	ir.VisitFuncsBottomUp(typecheck.Target.Funcs, func(list []*ir.Func, recursive bool) {
 		for _, f := range list {
 			name := ir.LinkFuncName(f)
 			if n, ok := p.WeightedCG.IRNodes[name]; ok {

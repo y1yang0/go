@@ -10,7 +10,8 @@ import "fmt"
 // Type-based Alias Anallysis
 //
 // Described in
-// Amer Diwan, Kathryn S. McKinley, J. Eliot B. Moss: Type-Based Alias Analysis. PLDI 1998
+// Amer Diwan, Kathryn S. McKinley, J. Eliot B. Moss: Type-Based Alias Analysis.
+// PLDI 1998
 //
 // TBAA relies on the fact that Golang is a type-safe language, i.e. different
 // pointer types cannot be converted to each other in Golang. Under this assumption,

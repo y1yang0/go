@@ -1,10 +1,33 @@
 package main
 
+import (
+	"log"
+	"os"
+	"runtime/pprof"
+	"slices"
+	"strconv"
+)
+
+func makeSortedStrings(n int) []string {
+	x := make([]string, n)
+	for i := 0; i < n; i++ {
+		x[i] = strconv.Itoa(i)
+	}
+	return x
+}
+func BenchmarkSlicesSortStrings_Sorted() {
+	ss := makeSortedStrings(100)
+
+	for i := 0; i < 100; i++ {
+		slices.Sort(ss)
+	}
+}
+
 // /// loop roate
 
 var t [256]byte
 
-func whatthefuck(b *[16]byte) {
+func whatthefuckk3121(b *[16]byte) {
 	for i, v := range b {
 		b[i] = t[v]
 	}
@@ -12,10 +35,12 @@ func whatthefuck(b *[16]byte) {
 
 var g = []int{3, 6, 7, 7, 4, 43, 7, 2}
 
-func whatthefuck3121(cnt int) {
+func whatthefuck(cnt int) int {
+	s := 0
 	for i := 0; i < cnt; i++ {
-		g[3] = 5
+		s += i
 	}
+	return s
 }
 
 //go:noinline
@@ -202,7 +227,21 @@ func main() {
 	// tx := []int8{3, 3, 5, 5}
 	// tx1 := []int{3, 3, 5, 5}
 	// a := [16]byte{}
-	// whatthefuck(tx, tx1)
+	f, err := os.Create("test.pprof")
+	if err != nil {
+		log.Fatal("could not create CPU profile: ", err)
+	}
+	defer f.Close()
+
+	if err := pprof.StartCPUProfile(f); err != nil {
+		log.Fatal("could not start CPU profile: ", err)
+	}
+	defer pprof.StopCPUProfile()
+	whatthefuck(4)
+	// BenchmarkSlicesSortStrings_Sorted()
+	// for i := 0; i < 100000; i++ {
+	// 	whatthefuck(10000)
+	// }
 	// whatthefuck("aaaa", 3)
 	// whatthefuck(3, 5, 62)
 	// whatthefuck(12345*1000000000+54321, 1000000000, &e)

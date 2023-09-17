@@ -329,6 +329,11 @@ type Request struct {
 	// It is unexported to prevent people from using Context wrong
 	// and mutating the contexts held by callers of the same request.
 	ctx context.Context
+
+	// The following fields are for requests matched by ServeMux.
+	pat         *pattern          // the pattern that matched
+	matches     []string          // values for the matching wildcards in pat
+	otherValues map[string]string // for calls to SetPathValue that don't match a wildcard
 }
 
 // Context returns the request's context. To change the context, use
@@ -591,8 +596,29 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 	if err != nil {
 		return err
 	}
+	// Validate that the Host header is a valid header in general,
+	// but don't validate the host itself. This is sufficient to avoid
+	// header or request smuggling via the Host field.
+	// The server can (and will, if it's a net/http server) reject
+	// the request if it doesn't consider the host valid.
 	if !httpguts.ValidHostHeader(host) {
-		return errors.New("http: invalid Host header")
+		// Historically, we would truncate the Host header after '/' or ' '.
+		// Some users have relied on this truncation to convert a network
+		// address such as Unix domain socket path into a valid, ignored
+		// Host header (see https://go.dev/issue/61431).
+		//
+		// We don't preserve the truncation, because sending an altered
+		// header field opens a smuggling vector. Instead, zero out the
+		// Host header entirely if it isn't valid. (An empty Host is valid;
+		// see RFC 9112 Section 3.2.)
+		//
+		// Return an error if we're sending to a proxy, since the proxy
+		// probably can't do anything useful with an empty Host header.
+		if !usingProxy {
+			host = ""
+		} else {
+			return errors.New("http: invalid Host header")
+		}
 	}
 
 	// According to RFC 6874, an HTTP client, proxy, or other
@@ -648,6 +674,8 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 		userAgent = r.Header.Get("User-Agent")
 	}
 	if userAgent != "" {
+		userAgent = headerNewlineToSpace.Replace(userAgent)
+		userAgent = textproto.TrimString(userAgent)
 		_, err = fmt.Fprintf(w, "User-Agent: %s\r\n", userAgent)
 		if err != nil {
 			return err
@@ -822,8 +850,9 @@ func NewRequest(method, url string, body io.Reader) (*Request, error) {
 // optional body.
 //
 // If the provided body is also an io.Closer, the returned
-// Request.Body is set to body and will be closed by the Client
-// methods Do, Post, and PostForm, and Transport.RoundTrip.
+// Request.Body is set to body and will be closed (possibly
+// asynchronously) by the Client methods Do, Post, and PostForm,
+// and Transport.RoundTrip.
 //
 // NewRequestWithContext returns a Request suitable for use with
 // Client.Do or Transport.RoundTrip. To create a request for use with
@@ -1339,7 +1368,7 @@ func (r *Request) ParseMultipartForm(maxMemory int64) error {
 }
 
 // FormValue returns the first value for the named component of the query.
-// POST and PUT body parameters take precedence over URL query string values.
+// POST, PUT, and PATCH body parameters take precedence over URL query string values.
 // FormValue calls ParseMultipartForm and ParseForm if necessary and ignores
 // any errors returned by these functions.
 // If key is not present, FormValue returns the empty string.
@@ -1356,7 +1385,7 @@ func (r *Request) FormValue(key string) string {
 }
 
 // PostFormValue returns the first value for the named component of the POST,
-// PATCH, or PUT request body. URL query parameters are ignored.
+// PUT, or PATCH request body. URL query parameters are ignored.
 // PostFormValue calls ParseMultipartForm and ParseForm if necessary and ignores
 // any errors returned by these functions.
 // If key is not present, PostFormValue returns the empty string.
@@ -1389,6 +1418,48 @@ func (r *Request) FormFile(key string) (multipart.File, *multipart.FileHeader, e
 		}
 	}
 	return nil, nil, ErrMissingFile
+}
+
+// PathValue returns the value for the named path wildcard in the ServeMux pattern
+// that matched the request.
+// It returns the empty string if the request was not matched against a pattern
+// or there is no such wildcard in the pattern.
+func (r *Request) PathValue(name string) string {
+	if i := r.patIndex(name); i >= 0 {
+		return r.matches[i]
+	}
+	return r.otherValues[name]
+}
+
+func (r *Request) SetPathValue(name, value string) {
+	if i := r.patIndex(name); i >= 0 {
+		r.matches[i] = value
+	} else {
+		if r.otherValues == nil {
+			r.otherValues = map[string]string{}
+		}
+		r.otherValues[name] = value
+	}
+}
+
+// patIndex returns the index of name in the list of named wildcards of the
+// request's pattern, or -1 if there is no such name.
+func (r *Request) patIndex(name string) int {
+	// The linear search seems expensive compared to a map, but just creating the map
+	// takes a lot of time, and most patterns will just have a couple of wildcards.
+	if r.pat == nil {
+		return -1
+	}
+	i := 0
+	for _, seg := range r.pat.segments {
+		if seg.wild && seg.s != "" {
+			if name == seg.s {
+				return i
+			}
+			i++
+		}
+	}
+	return -1
 }
 
 func (r *Request) expectsContinue() bool {

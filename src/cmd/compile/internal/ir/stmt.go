@@ -23,7 +23,7 @@ func NewDecl(pos src.XPos, op Op, x *Name) *Decl {
 	switch op {
 	default:
 		panic("invalid Decl op " + op.String())
-	case ODCL, ODCLCONST, ODCLTYPE:
+	case ODCL:
 		n.op = op
 	}
 	return n
@@ -285,7 +285,7 @@ func NewIfStmt(pos src.XPos, cond Node, body, els []Node) *IfStmt {
 //
 // Note that a JumpTableStmt is more like a multiway-goto than
 // a multiway-if. In particular, the case bodies are just
-// labels to jump to, not not full Nodes lists.
+// labels to jump to, not full Nodes lists.
 type JumpTableStmt struct {
 	miniStmt
 
@@ -373,15 +373,13 @@ func NewRangeStmt(pos src.XPos, key, value, x Node, body []Node, distinctVars bo
 // A ReturnStmt is a return statement.
 type ReturnStmt struct {
 	miniStmt
-	origNode       // for typecheckargs rewrite
-	Results  Nodes // return list
+	Results Nodes // return list
 }
 
 func NewReturnStmt(pos src.XPos, results []Node) *ReturnStmt {
 	n := &ReturnStmt{}
 	n.pos = pos
 	n.op = ORETURN
-	n.orig = n
 	n.Results = results
 	return n
 }

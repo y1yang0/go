@@ -424,7 +424,7 @@ func shouldElimIfElse(no, yes, post *Block, arch string) bool {
 	}
 }
 
-func canSpeculativelyExecuteValue(v *Value) bool {
+func isSpeculativeValue(v *Value) bool {
 	if v.Op == OpPhi || isDivMod(v.Op) || isPtrArithmetic(v.Op) || v.Type.IsMemory() ||
 		v.MemoryArg() != nil || opcodeTable[v.Op].hasSideEffects {
 		return false
@@ -444,7 +444,7 @@ func canSpeculativelyExecute(b *Block) bool {
 	// don't fuse memory ops, Phi ops, divides (can panic),
 	// or anything else with side-effects
 	for _, v := range b.Values {
-		if !canSpeculativelyExecuteValue(v) {
+		if !isSpeculativeValue(v) {
 			return false
 		}
 	}

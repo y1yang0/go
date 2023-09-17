@@ -98,7 +98,7 @@ var (
 	FlagDebugTextSize = flag.Int("debugtextsize", 0, "debug text section max size")
 	flagDebugNosplit  = flag.Bool("debugnosplit", false, "dump nosplit call graph")
 	FlagStrictDups    = flag.Int("strictdups", 0, "sanity check duplicate symbol contents during object file reading (1=warn 2=err).")
-	FlagRound         = flag.Int("R", -1, "set address rounding `quantum`")
+	FlagRound         = flag.Int64("R", -1, "set address rounding `quantum`")
 	FlagTextAddr      = flag.Int64("T", -1, "set the start address of text symbols")
 	flagEntrySymbol   = flag.String("E", "", "set `entry` symbol name")
 	flagPruneWeakMap  = flag.Bool("pruneweakmap", true, "prune weak mapinit refs")
@@ -245,6 +245,9 @@ func Main(arch *sys.Arch, theArch Arch) {
 		*FlagW = true
 	case ternaryFlagUnset:
 		*FlagW = *FlagS // -s implies -w if not explicitly set
+		if ctxt.IsDarwin() && ctxt.BuildMode == BuildModeCShared {
+			*FlagW = true // default to -w in c-shared mode on darwin, see #61229
+		}
 	}
 
 	if !buildcfg.Experiment.RegabiWrappers {

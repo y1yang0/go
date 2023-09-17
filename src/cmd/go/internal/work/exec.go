@@ -14,7 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"go/token"
-	"internal/coverage"
+	"internal/coverage/covcmd"
 	"internal/lazyregexp"
 	"io"
 	"io/fs"
@@ -1250,7 +1250,7 @@ func (b *Builder) vet(ctx context.Context, a *Action) error {
 		// that vet doesn't like in low-level packages
 		// like runtime, sync, and reflect.
 		// Note that $GOROOT/src/buildall.bash
-		// does the same for the misc-compile trybots
+		// does the same
 		// and should be updated if these flags are
 		// changed here.
 		vetFlags = []string{"-unsafeptr=false"}
@@ -1260,7 +1260,7 @@ func (b *Builder) vet(ctx context.Context, a *Action) error {
 		// like hard-coded forced returns or panics that make
 		// code unreachable. It's unreasonable to insist on files
 		// not having any unreachable code during "go test".
-		// (buildall.bash still runs with -unreachable enabled
+		// (buildall.bash still has -unreachable enabled
 		// for the overall whole-tree scan.)
 		if cfg.CmdName == "test" {
 			vetFlags = append(vetFlags, "-unreachable=false")
@@ -2064,7 +2064,7 @@ func (b *Builder) cover2(a *Action, infiles, outfiles []string, varName string, 
 func (b *Builder) writeCoverPkgInputs(a *Action, pconfigfile string, covoutputsfile string, outfiles []string) error {
 	p := a.Package
 	p.Internal.CoverageCfg = a.Objdir + "coveragecfg"
-	pcfg := coverage.CoverPkgConfig{
+	pcfg := covcmd.CoverPkgConfig{
 		PkgPath: p.ImportPath,
 		PkgName: p.Name,
 		// Note: coverage granularity is currently hard-wired to
@@ -2373,7 +2373,11 @@ func (b *Builder) runOut(a *Action, dir string, env []string, cmdargs ...any) ([
 	}
 
 	var buf bytes.Buffer
-	cmd := exec.Command(cmdline[0], cmdline[1:]...)
+	path, err := cfg.LookPath(cmdline[0])
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(path, cmdline[1:]...)
 	if cmd.Path != "" {
 		cmd.Args[0] = cmd.Path
 	}
@@ -2397,7 +2401,7 @@ func (b *Builder) runOut(a *Action, dir string, env []string, cmdargs ...any) ([
 
 	cmd.Env = append(cmd.Env, env...)
 	start := time.Now()
-	err := cmd.Run()
+	err = cmd.Run()
 	if a != nil && a.json != nil {
 		aj := a.json
 		aj.Cmd = append(aj.Cmd, joinUnambiguously(cmdline))
@@ -2683,7 +2687,11 @@ func (b *Builder) ccompile(a *Action, p *load.Package, outfile string, flags []s
 			}
 		}
 
-		if err != nil || os.Getenv("GO_BUILDER_NAME") != "" {
+		if err == nil && os.Getenv("GO_BUILDER_NAME") != "" {
+			output = append(output, "C compiler warning promoted to error on Go builders\n"...)
+			err = errors.New("warning promoted to error")
+		}
+		if err != nil {
 			err = formatOutput(b.WorkDir, p.Dir, p.ImportPath, p.Desc(), b.processOutput(output))
 		} else {
 			b.showOutput(a, p.Dir, p.Desc(), b.processOutput(output))
@@ -3013,7 +3021,7 @@ func (b *Builder) gccCompilerID(compiler string) (id cache.ActionID, ok bool) {
 	//
 	// Otherwise, we compute a new validation description
 	// and compiler id (below).
-	exe, err := exec.LookPath(compiler)
+	exe, err := cfg.LookPath(compiler)
 	if err != nil {
 		return cache.ActionID{}, false
 	}
