@@ -4,7 +4,9 @@
 
 package ssa
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // ----------------------------------------------------------------------------
 // Loop Rotation
@@ -153,6 +155,56 @@ import "fmt"
 //     * Update cond to use updated Phi as arguments.
 //     * Update uses of Values defined in loop header as loop header no longer
 //     dominates the loop exit
+
+// v4 = Phi
+// ...
+// v2 = Add v4, v5
+// v1 = Add v2, v3
+// If v1-> loop exit, loop ex
+func isTrivialLoopDef(sdom SparseTree, loopHeader *Block, val *Value, depth int) bool {
+	if depth >= 5 {
+		return false
+	}
+
+	if !isSpeculativeValue(val) {
+		return false
+	}
+	if val.Op == OpPhi && sdom.IsAncestorEq(val.Block, loopHeader) {
+		return true
+	}
+	for _, arg := range val.Args {
+		if !isTrivialLoopDef(sdom, loopHeader, arg, depth+1) {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneTrivialLoopDef(fn *Func, block *Block, sdom SparseTree, loop *loop, val *Value) *Value {
+	if val.Block != loop.header && val.Block != loop.latch {
+		assert(sdom.isAncestor(val.Block, loop.header), "sanity check")
+		return val
+	}
+	if val.Op == OpPhi {
+		for idx, pred := range val.Block.Preds {
+			if sdom.isAncestor(pred.b, loop.header) {
+				return val.Args[idx]
+			}
+		}
+		panic("NONONO")
+	}
+	clone := fn.newValueNoBlock(val.Op, val.Type, val.Pos)
+	clone.AuxInt = val.AuxInt
+	clone.Aux = val.Aux
+	args := make([]*Value, len(val.Args))
+	for i := 0; i < len(val.Args); i++ {
+		args[i] = cloneTrivialLoopDef(fn, block, sdom, loop, val.Args[i])
+	}
+	clone.AddArgs(args...)
+	block.placeValue(clone)
+	return clone
+}
+
 func (loop *loop) buildLoopForm(fn *Func) string {
 	loopHeader := loop.header
 	// loopHeader <- entry(0), loopLatch(1)?
@@ -179,10 +231,7 @@ func (loop *loop) buildLoopForm(fn *Func) string {
 
 	loop.exit = loopExit
 	loop.latch = loopHeader.Preds[1].b
-
-	if len(loopExit.Preds) != 1 {
-		return "loop exit requries 1 predecessor"
-	}
+	sdom := fn.Sdom()
 
 	if len(loop.exits) != 1 {
 		for _, exit := range loop.exits {
@@ -191,7 +240,7 @@ func (loop *loop) buildLoopForm(fn *Func) string {
 			}
 			// Loop header may not dominate all loop exist, given up for these
 			// exotic guys
-			if !fn.Sdom().IsAncestorEq(loopHeader, exit) {
+			if !sdom.IsAncestorEq(loopHeader, exit) {
 				return "loop exit is not dominated by header"
 			}
 		}
@@ -208,16 +257,27 @@ func (loop *loop) buildLoopForm(fn *Func) string {
 		return "loop exit is invalid"
 	}
 
-	for _, val := range loop.exit.Values {
-		if isLoopClosePhi(val) {
-			if len(val.Args) > 0 && val.Args[0].Op != OpPhi {
-				return "use other phi"
+	for ipred, pred := range loop.exit.Preds {
+		if pred.b == loop.header {
+			for _, val := range loop.exit.Values {
+				if val.Op == OpPhi {
+					if arg := val.Args[ipred]; arg.Op != OpPhi && arg.Block == loop.header {
+						// fmt.Printf("==XX1 %v\n", isTrivialLoopDef(sdom, loopHeader, val.Args[0], 0))
+						return "use other phi"
+					}
+				}
 			}
+			break
 		}
 	}
+
 	for _, ctrl := range loop.header.ControlValues() {
+		if ctrl.Uses > 1 {
+			return "cond has many users"
+		}
 		for _, arg := range ctrl.Args {
 			if arg.Block == loop.header && arg.Op != OpPhi {
+				// fmt.Printf("==XX2 %v\n", isTrivialLoopDef(sdom, loopHeader, arg, 0))
 				return "cond relies not phi"
 			}
 		}
@@ -227,6 +287,7 @@ func (loop *loop) buildLoopForm(fn *Func) string {
 
 // moveCond moves conditional test from loop header to loop latch
 func (loop *loop) moveCond() *Value {
+	// TODO: 移动后必须要保证loop cond的arg支配当前loop cond
 	cond := loop.header.Controls[0]
 	if cond.Op == OpPhi {
 		// In rare case, conditional test is Phi, we can't move it to loop latch
@@ -285,17 +346,16 @@ func (loop *loop) updateCond(cond *Value) {
 	}
 }
 
-// loopHeader -> loopBody
 func (loop *loop) rewireLoopHeader(exitIdx int) {
 	loopHeader := loop.header
 	loopHeader.Reset(BlockPlain)
 
 	e := loopHeader.Succs[1-exitIdx]
+	// loopHeader -> loopBody(0)
 	loopHeader.Succs = loopHeader.Succs[:1]
 	loopHeader.Succs[0] = e
 }
 
-// loopLatch -> loopHeader, loopExit
 func (loop *loop) rewireLoopLatch(ctrl *Value, exitIdx int) {
 	loopExit := loop.exit
 	loopLatch := loop.latch
@@ -313,12 +373,14 @@ func (loop *loop) rewireLoopLatch(ctrl *Value, exitIdx int) {
 	}
 	if exitIdx == 1 {
 		//loopLatch -> loopHeader(0), loopExit(1)
-		loopLatch.Succs = append(loopLatch.Succs, Edge{loopExit, 0})
+		loopLatch.Succs = append(loopLatch.Succs, Edge{loopExit, idx})
 	} else {
 		//loopLatch -> loopExit(0), loopHeader(1)
-		loopLatch.Succs = append([]Edge{{loopExit, 0}}, loopLatch.Succs[:]...)
+		loopLatch.Succs = append([]Edge{{loopExit, idx}}, loopLatch.Succs[:]...)
 	}
+	// loopExit <- loopLatch, ...
 	loopExit.Preds[idx] = Edge{loopLatch, exitIdx}
+	// loopHeader <- loopLatch, ...
 	for i := 0; i < len(loopHeader.Preds); i++ {
 		if loopHeader.Preds[i].b == loopLatch {
 			idx = i
@@ -328,7 +390,6 @@ func (loop *loop) rewireLoopLatch(ctrl *Value, exitIdx int) {
 	loopHeader.Preds[idx] = Edge{loopLatch, 1 - exitIdx}
 }
 
-// loopGuard -> loopHeader, loopExit
 func (loop *loop) rewireLoopGuard(sdom SparseTree, guardCond *Value, exitIdx int) {
 	loopHeader := loop.header
 	loopGuard := loop.guard
@@ -344,62 +405,53 @@ func (loop *loop) rewireLoopGuard(sdom SparseTree, guardCond *Value, exitIdx int
 			break
 		}
 	}
+
+	numExitPred := len(loopExit.Preds)
 	if exitIdx == 1 {
 		// loopGuard -> loopHeader(0), loopExit(1)
 		loopGuard.Succs = append(loopGuard.Succs, Edge{loopHeader, idx})
-		loopGuard.Succs = append(loopGuard.Succs, Edge{loopExit, 1})
+		loopGuard.Succs = append(loopGuard.Succs, Edge{loopExit, numExitPred})
 		loopExit.Preds = append(loopExit.Preds, Edge{loopGuard, 1})
 		loopHeader.Preds[idx] = Edge{loopGuard, 0}
 	} else {
 		// loopGuard -> loopExit(0), loopHeader(1)
-		loopGuard.Succs = append(loopGuard.Succs, Edge{loop.exit, 1})
+		loopGuard.Succs = append(loopGuard.Succs, Edge{loopExit, numExitPred})
 		loopGuard.Succs = append(loopGuard.Succs, Edge{loopHeader, idx})
 		loopExit.Preds = append(loopExit.Preds, Edge{loopGuard, 0})
 		loopHeader.Preds[idx] = Edge{loopGuard, 1}
 	}
 }
 
-// loopEntry -> loopGuard
 func (loop *loop) rewireLoopEntry(sdom SparseTree, loopGuard *Block) {
 	entry := sdom.Parent(loop.header)
+	// loopEntry -> loopGuard
 	entry.Succs = entry.Succs[:0]
 	entry.AddEdgeTo(loopGuard)
 }
 
-// loopEntry -> loopGuard
-// loopGuard -> loopHeader, loopExit
-func (loop *loop) createLoopGuard(fn *Func, cond *Value, exitIdx int) {
-	// Create loop guard block
-	// TODO(yyang): Creation of loop guard can be skipped if original IR already
-	// exists such form. e.g. if 0 < len(b) { for i := 0; i < len(b); i++ {...} }
-	loopGuard := fn.NewBlock(BlockIf)
-	loop.guard = loopGuard
-	sdom := fn.Sdom()
-
-	// Rewire entry to loop guard instead of original loop header
-	loop.rewireLoopEntry(sdom, loopGuard)
-
-	// Create conditional test for loop guard based on existing conditional test
+// Clone old conditional test and its arguments to control loop guard
+func (loop *loop) cloneCond(fn *Func, sdom SparseTree, cond *Value) *Value {
 	var guardCond *Value
 	if cond.Op != OpPhi {
 		// Normal case, clone conditional test
 		//	  If (Less v1 Phi(v2 v3)) -> loop body, loop exit
 		// => If (Less v1 v2)         -> loop header, loop exit
-		guardCond = loopGuard.NewValue0IA(cond.Pos, cond.Op, cond.Type, cond.AuxInt, cond.Aux)
-		newArgs := make([]*Value, 0, len(cond.Args))
-		for _, arg := range cond.Args {
-			newArg := arg
-			// Dont use Phi, use its incoming value instead, otherwise we will
-			// lose one update
-			if arg.Block == loop.header && arg.Op == OpPhi {
-				newArg = arg.Args[0]
-			}
-			if !sdom.IsAncestorEq(newArg.Block, cond.Block) {
-				panic("new argument of guard cond must dominate old cond")
-			}
-			newArgs = append(newArgs, newArg)
-		}
-		guardCond.AddArgs(newArgs...)
+		// guardCond = loopGuard.NewValue0IA(cond.Pos, cond.Op, cond.Type, cond.AuxInt, cond.Aux)
+		// newArgs := make([]*Value, 0, len(cond.Args))
+		// for _, arg := range cond.Args {
+		// 	newArg := arg
+		// 	// Dont use Phi, use its incoming value instead, otherwise we will
+		// 	// lose one update
+		// 	if arg.Block == loop.header && arg.Op == OpPhi {
+		// 		newArg = arg.Args[0]
+		// 	}
+		// 	if !sdom.IsAncestorEq(newArg.Block, cond.Block) {
+		// 		panic("new argument of guard cond must dominate old cond")
+		// 	}
+		// 	newArgs = append(newArgs, newArg)
+		// }
+		// guardCond.AddArgs(newArgs...)
+		guardCond = cloneTrivialLoopDef(fn, loop.guard, sdom, loop, cond)
 	} else {
 		// Rare case
 		//	   If (Phi v1 v2) -> loop body, loop exit
@@ -410,31 +462,55 @@ func (loop *loop) createLoopGuard(fn *Func, cond *Value, exitIdx int) {
 			panic("arg of Phi cond must dominate loop header")
 		}
 	}
-
-	// Rewire loop guard to original loop header and loop exit
-	loop.rewireLoopGuard(fn.Sdom(), guardCond, exitIdx)
+	return guardCond
 }
 
 func (loop *loop) updateLoopUse(fn *Func) {
-	for _, val := range loop.exit.Values {
-		if isLoopClosePhi(val) {
-			loopDef := val.Args[0]
-			var phiArgs [2]*Value
-			for k := 0; k < len(loopDef.Block.Preds); k++ {
-				if fn.Sdom().IsAncestorEq(loopDef.Block.Preds[k].b, loop.guard) {
-					phiArgs[1] = loopDef.Args[k]
-				} else {
-					phiArgs[0] = loopDef.Args[k]
+	fn.invalidateCFG()
+	sdom := fn.Sdom()
+	loopExit := loop.exit
+	for _, val := range loopExit.Values {
+		if val.Op == OpPhi {
+			assert(len(val.Args) == len(loopExit.Preds)-1, "less than loop exit preds")
+			// fmt.Printf("==BEF %v\n", val.LongString())
+			newArgs := make([]*Value, len(loopExit.Preds))
+			var newPathArg *Value // new guard to exit path
+			for iarg, arg := range val.Args {
+				newArgs[iarg] = arg
+				exitPred := loopExit.Preds[iarg].b
+				if loop.latch == exitPred {
+					// header->exit => latch->exit, update loop use
+					if sdom.isAncestor(arg.Block, loop.header) {
+						newPathArg = arg
+					} else if arg.Block == loop.header {
+						assert(arg.Op == OpPhi, "use other than phi")
+						guardIdx := 0
+						if loop.header.Preds[0].b == loop.latch {
+							guardIdx = 1 // then index 1 is loop guard
+						}
+						backedgeArg := arg.Args[1-guardIdx]
+						newArgs[iarg] = backedgeArg
+						newPathArg = arg.Args[guardIdx]
+					} else {
+						panic("can not image")
+					}
 				}
 			}
-			val.resetArgs()
-			val.AddArgs(phiArgs[:]...)
+
+			if newPathArg != nil {
+				newArgs[len(loop.exit.Preds)-1] = newPathArg
+				val.resetArgs()
+				val.AddArgs(newArgs...)
+				// fmt.Printf("==replace phi %v %v\n", val.LongString(), loop.LongString())
+			} else {
+				fn.Fatalf("Can not determine new arg of Phi for guard to exit path")
+			}
 		}
 	}
 }
 
 func (loop *loop) verifyRotatedForm() {
-	if len(loop.header.Succs) != 1 || len(loop.exit.Preds) != 2 ||
+	if len(loop.header.Succs) != 1 || len(loop.exit.Preds) < 2 ||
 		len(loop.latch.Succs) != 2 || len(loop.guard.Succs) != 2 {
 		panic("Bad shape after rotation")
 	}
@@ -479,14 +555,20 @@ func (loop *loop) CreateLoopLand(fn *Func) bool {
 // 39022/25245 rotated/bad before lower, lcssa
 // 46986/17281 rotated/bad before lower, lcssa
 // 47053/17162 rotated/bad before lower, lcssa with arbitary exit order
+// 52236/12282 rotated/bad before lower, allow multiple preds of exit
 func (fn *Func) RotateLoop(loop *loop) bool {
 	if loop.IsRotatedForm() {
 		return true
 	}
-	// if fn.Name != "whatthefuck" {
+	// if fn.Name != "Name" {
 	// 	return false
 	// }
-
+	// if fn.Name != "(*regAllocState).liveAfterCurrentInstruction" {
+	// 	return false
+	// }
+	// if fn.Name != "heapBitsSetType" {
+	// 	return false
+	// }
 	// Try to build loop form and bail out if failure
 	if msg := loop.buildLoopForm(fn); msg != "" {
 		// if fn.pass.debug > 1 {
@@ -509,8 +591,21 @@ func (fn *Func) RotateLoop(loop *loop) bool {
 	// Rewire loop latch to header and exit based on new conditional test
 	loop.rewireLoopLatch(cond, exitIdx)
 
-	// Create new loop guard block and wire it to appropriate blocks
-	loop.createLoopGuard(fn, cond, exitIdx)
+	// Create loop guard block
+	// TODO(yyang): Creation of loop guard can be skipped if original IR already
+	// exists such form. e.g. if 0 < len(b) { for i := 0; i < len(b); i++ {...} }
+	loopGuard := fn.NewBlock(BlockIf)
+	loop.guard = loopGuard
+	sdom := fn.Sdom()
+
+	// Rewire entry to loop guard instead of original loop header
+	loop.rewireLoopEntry(sdom, loopGuard)
+
+	// Clone old conditional test and its arguments to control loop guard
+	guardCond := loop.cloneCond(fn, sdom, cond)
+
+	// Rewire loop guard to original loop header and loop exit
+	loop.rewireLoopGuard(fn.Sdom(), guardCond, exitIdx)
 
 	// Update cond to use updated Phi as arguments
 	loop.updateCond(cond)

@@ -4,6 +4,11 @@
 
 package ssa
 
+import (
+	"fmt"
+	"sort"
+)
+
 // ----------------------------------------------------------------------------
 // Loop Close SSA Form
 //
@@ -32,6 +37,65 @@ package ssa
 
 const LoopClosePhiAux string = ".lcphi"
 
+type loopUse struct {
+	val   *Value // user is Value
+	block *Block // user is block's ctrl Value
+}
+
+type loopDefUses map[*Value][]*loopUse
+
+func (lu *loopUse) String() string {
+	return fmt.Sprintf("{%v,%v}", lu.val, lu.block)
+}
+
+func (lu *loopUse) useBlock(def *Value) *Block {
+	var ub *Block
+	if val := lu.val; val != nil {
+		if val.Op == OpPhi {
+			// Used by Phi? Use corresponding incoming block as the real use
+			// block, because loop def does not really dominate Phi
+			for ipred, pred := range val.Args {
+				if pred == def {
+					ub = val.Block.Preds[ipred].b
+					break
+				}
+			}
+		} else {
+			ub = val.Block
+		}
+	} else {
+		ub = lu.block
+	}
+	assert(ub != nil, "no use block")
+	return ub
+}
+
+func (lu *loopUse) replaceUse(def *Value, newUse *Value) {
+	if val := lu.val; val != nil {
+		i := -1
+		for idx, arg := range val.Args {
+			if arg == def {
+				i = idx
+				break
+			}
+		}
+		if i != -1 {
+			val.SetArg(i, newUse)
+		} else {
+			panic("not a valid use")
+		}
+	} else if block := lu.block; block != nil {
+		for idx, ctrl := range block.ControlValues() {
+			if ctrl == def {
+				block.ReplaceControl(idx, newUse)
+				break
+			}
+		}
+	} else {
+		panic("loop def is neither used by value nor by block")
+	}
+}
+
 func containsBlock(ln *loopnest, loop *loop, block *Block) bool {
 	if ln.b2l[block.ID] == loop {
 		return true
@@ -45,7 +109,7 @@ func containsBlock(ln *loopnest, loop *loop, block *Block) bool {
 }
 
 func isLoopClosePhi(val *Value) bool {
-	if val.Op == OpPhi && auxToString(val.Aux) == LoopClosePhiAux {
+	if val.Op == OpPhi && val.Aux != nil && auxToString(val.Aux) == LoopClosePhiAux {
 		return true
 	}
 	return false
@@ -59,165 +123,92 @@ func newLoopClosePhi(fn *Func, exit *Block, loopDef *Value) *Value {
 		phiArgs[idx] = loopDef
 	}
 	phi.AddArgs(phiArgs...)
-	//fmt.Printf("==newphi%v %v\n", phi.LongString(), exit)
 	exit.placeValue(phi)
 	return phi
 }
 
-func (fn *Func) placeLoopClosePhi(ln *loopnest, loop *loop, loopDefs []*Value) bool {
-	// build def use chains
-	defUses := make(map[*Value][]interface{})
-	for _, loopDef := range loopDefs {
-		if loopDef.Uses > 0 {
-			defUses[loopDef] = make([]interface{}, 0, loopDef.Uses)
-		}
-	}
-	for _, block := range fn.Blocks {
-		for _, val := range block.Values {
-			for _, arg := range val.Args {
-				if _, exist := defUses[arg]; exist {
-					defUses[arg] = append(defUses[arg], val)
-				}
-			}
-		}
-		for _, ctrl := range block.ControlValues() {
-			if _, exist := defUses[ctrl]; exist {
-				defUses[ctrl] = append(defUses[ctrl], block)
-			}
-		}
-	}
-
-	// For every loop defs, check if we need to insert loop close phi
-
-	getUseBlock := func(use interface{}, loopDef *Value) *Block {
-		var useBlock *Block
-		switch use := use.(type) {
-		case *Value:
-			if use.Op == OpPhi {
-				// Used by Phi? Use corresponding incoming block as the real use
-				// block, because arguments of Phi dont dominate Phi itself
-				for ipred, pred := range use.Args {
-					if pred == loopDef {
-						useBlock = use.Block.Preds[ipred].b
-						break
-					}
-				}
-			} else {
-				useBlock = use.Block
-			}
-		case *Block:
-			useBlock = use
-		default:
-			panic("should not reach here")
-		}
-		return useBlock
-	}
+func (fn *Func) placeLoopClosePhi(ln *loopnest, loop *loop, defUses loopDefUses) bool {
 	sdom := fn.Sdom()
-	for len(loopDefs) > 0 {
-		loopDef := loopDefs[0]
-		loopDefs = loopDefs[1:]
-
-		if len(loop.exits) == 0 {
-			continue
-		}
-
-		// Collect all uses of loop def that live outside loop
-		uses := make([]interface{}, 0)
+	keys := make([]*Value, 0)
+	for k, _ := range defUses {
+		keys = append(keys, k)
+	}
+	sort.SliceStable(keys, func(i, j int) bool {
+		return keys[i].ID < keys[j].ID
+	})
+	for _, loopDef := range keys {
+		// multiple uses shares the same close phi if they live in same exit block
+		e2phi := make(map[*Block]*Value, 0)
 		for _, use := range defUses[loopDef] {
-			useBlock := getUseBlock(use, loopDef)
-			if useBlock == nil {
-				continue
-			}
+			useBlock := use.useBlock(loopDef)
+
 			if ln.b2l[useBlock.ID] == loop {
 				continue
 			}
+
+			// Only loop use that located in current loop takes into account
 			if useBlock != loopDef.Block && !containsBlock(ln, loop, useBlock) {
-				uses = append(uses, use)
-			}
-		}
-		if len(uses) == 0 {
-			continue
-		}
-
-		// fmt.Printf("==DEF%v USES%v %v\n", loopDef.LongString(), uses, loop.exits)
-		b2phi := make(map[*Block]*Value, 0)
-		for _, use := range uses {
-			useBlock := getUseBlock(use, loopDef)
-			var foundExit *Block
-			for _, exit := range loop.exits {
-				if sdom.IsAncestorEq(exit, useBlock) {
-					foundExit = exit
-					break
-				}
-			}
-			if foundExit == nil {
-				// TODO: REVIVE THIS
-				// for _, pred := range useBlock.Preds {
-				// 	second := false
-				// 	for _, e := range loop.exits {
-				// 		if e == pred.b {
-				// 			second = true
-				// 			break
-				// 		}
-				// 	}
-				// 	if second == false {
-				// 		//fmt.Printf("==BAD\n")
-				// 	}
-				// 	break
-				// }
-				return false
-			} else {
-				// //fmt.Printf("GOOD\n")
-			}
-			switch use := use.(type) {
-			case *Block:
-				for idx, ctrl := range use.ControlValues() {
-					if ctrl == loopDef {
-						var phi *Value
-						if phival, exist := b2phi[foundExit]; exist {
-							phi = phival
-						} else {
-							phi = newLoopClosePhi(fn, foundExit, loopDef)
-							b2phi[foundExit] = phi
-						}
-						useBlock.ReplaceControl(idx, phi)
-						// fmt.Printf("==lcssa ctrl old %v new %v\n",
-						// 	use.LongString(), phi.LongString())
+				// Find a proper block to place loop close phi
+				var foundExit *Block
+				for _, exit := range loop.exits {
+					if sdom.IsAncestorEq(exit, useBlock) {
+						foundExit = exit
 						break
 					}
 				}
-			case *Value:
-				for idx, arg := range use.Args {
-					if arg == loopDef {
-						var phi *Value
-						if phival, exist := b2phi[foundExit]; exist {
-							phi = phival
-						} else {
-							phi = newLoopClosePhi(fn, foundExit, loopDef)
-							b2phi[foundExit] = phi
-						}
-						use.SetArg(idx, phi)
-						// fmt.Printf("==lcssa old %v new %v\n",
-						// 	use.LongString(), phi.LongString())
-						break
-					}
+				if foundExit == nil {
+					// TODO: REVIVE THIS
+					// cnt := 0
+					// for _, pred := range useBlock.Preds {
+					// 	for _, e := range loop.exits {
+					// 		if e == pred.b {
+					// 			cnt++
+					// 			break
+					// 		}
+					// 	}
+					// }
+					// if cnt != len(useBlock.Preds) {
+					// 	fmt.Printf("==BAD\n")
+					// } else {
+					// 	fmt.Printf("==GOOD1\n")
+					// }
+					return false
+				} else {
+					// fmt.Printf("==GOOD\n")
 				}
+
+				// Allocate close phi in that block
+				var phi *Value
+				if phival, exist := e2phi[foundExit]; exist {
+					phi = phival
+				} else {
+					phi = newLoopClosePhi(fn, foundExit, loopDef)
+					e2phi[foundExit] = phi
+				}
+
+				// Replace all uses of loop def with new close phi
+				if fn.pass.debug > 1 {
+					fmt.Printf("Replace loop use %v with loop close %v\n", use, phi)
+				}
+				use.replaceUse(loopDef, phi)
 			}
 		}
-
 	}
 	return true
 }
 
-// BuildLoopCloseForm tries to transform original loop to Loop Close SSA Form, it
-// is the cornerstone of other loop optimizations such as LICM and loop unswitching
+// BuildLoopCloseForm builds Loop Close SSA Form upon original loop form, this is
+// the cornerstone of other loop optimizations such as LICM and loop unswitching
+//
+// 5439/64298 good/bad build
 func (fn *Func) BuildLoopCloseForm(ln *loopnest, loop *loop) bool {
 	if len(loop.exits) == 0 {
 		return true
 	}
 
-	// If a block dominates any one of loop exits, Values defined in such block
-	// are able to be used outside loop
+	// Outside the loop we can only use values defined in the blocks of arbitrary
+	// loop exit dominators, so first collect these blocks and treat the Values
+	// in them as loop def
 	domBlocks := make([]*Block, 0)
 	blocks := make([]*Block, 0)
 	blocks = append(blocks, loop.exits...)
@@ -237,18 +228,37 @@ func (fn *Func) BuildLoopCloseForm(ln *loopnest, loop *loop) bool {
 		blocks = append(blocks, idom)
 	}
 
-	// Find Values that defined in previous blocks and used outside lopp
-	loopDefs := make([]*Value, 0)
+	// Look for out-of-loop users of these loop defs
+	defUses := make(loopDefUses, 0)
 	for _, block := range domBlocks {
 		for _, val := range block.Values {
 			if val.Uses == 0 {
 				continue
 			}
-			loopDefs = append(loopDefs, val)
+			if _, exist := defUses[val]; !exist {
+				// many duplicate definitions, avoid redundant mem allocations
+				defUses[val] = make([]*loopUse, 0, val.Uses)
+			}
 		}
 	}
-	//fmt.Printf("==LCSSA Form %v %v\n", loop.header, loop.exits)
-	// Insert proper loop close phi for these uses
-	return fn.placeLoopClosePhi(ln, loop, loopDefs)
+	for _, block := range fn.Blocks {
+		for _, val := range block.Values {
+			for _, arg := range val.Args {
+				if _, exist := defUses[arg]; exist {
+					defUses[arg] = append(defUses[arg], &loopUse{val, nil})
+				}
+			}
+		}
+		for _, ctrl := range block.ControlValues() {
+			if _, exist := defUses[ctrl]; exist {
+				defUses[ctrl] = append(defUses[ctrl], &loopUse{nil, block})
+			}
+		}
+	}
+
+	// Finally, insert loop close Phis at the closest loop exits of the blocks
+	// where loop uses are located, and then instead of using the loop def
+	// directly, the uses use these newly inserted loop close phi
+	return fn.placeLoopClosePhi(ln, loop, defUses)
 	// TODO: VERIFY FORM
 }
