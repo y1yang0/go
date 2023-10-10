@@ -424,9 +424,12 @@ func licm(f *Func) {
 	// if f.Name != "(*Reader).Peek" {
 	// 	return
 	// }
-	// if f.Name != "(*spanSet).pop" {
+	// if f.Name != "(*Frames).Next" {
 	// 	return
 	// }
+	if f.Name != "getempty" {
+		return
+	}
 
 	loopnest := f.loopnest()
 	if loopnest.hasIrreducible {

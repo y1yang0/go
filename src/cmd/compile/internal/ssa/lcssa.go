@@ -37,6 +37,7 @@ import (
 // carefully with respect to dominance relationship, which is error prone and
 // hard to maintain.
 
+// Def-Use utilities
 type user struct {
 	def   *Value
 	val   *Value // user is Value
@@ -45,20 +46,24 @@ type user struct {
 
 type defUses map[*Value][]*user
 
-func (lu *user) String() string {
-	return fmt.Sprintf("{%v,%v}", lu.val, lu.block)
+func (u *user) String() string {
+	if u.val != nil {
+		return fmt.Sprintf("{%v:%v}", u.def, u.val)
+	} else {
+		return fmt.Sprintf("{%v:%v}", u.def, u.block)
+	}
 }
 
-// useBlock returns the block where the loop def is used. If the loop use is type
-// of Phi, then the use block is the corresponding incoming block
-func (lu *user) useBlock() *Block {
+// useBlock returns the block where the def is used. If the use is type of Phi,
+// then the use block is the corresponding incoming block
+func (u *user) useBlock() *Block {
 	var ub *Block
-	if val := lu.val; val != nil {
+	if val := u.val; val != nil {
 		if val.Op == OpPhi {
 			// Used by Phi? Use corresponding incoming block as the real use
-			// block, because loop def does not really dominate Phi
+			// block, because def does not really dominate Phi
 			for ipred, pred := range val.Args {
-				if pred == lu.def {
+				if pred == u.def {
 					ub = val.Block.Preds[ipred].b
 					break
 				}
@@ -67,18 +72,18 @@ func (lu *user) useBlock() *Block {
 			ub = val.Block
 		}
 	} else {
-		ub = lu.block
+		ub = u.block
 	}
 	assert(ub != nil, "no use block")
 	return ub
 }
 
-// replaceUse replaces the use of loop def with new use
-func (lu *user) replaceUse(newUse *Value) {
-	if val := lu.val; val != nil {
+// replaceUse replaces the use of def with new use
+func (u *user) replaceUse(newUse *Value) {
+	if val := u.val; val != nil {
 		i := -1
 		for idx, arg := range val.Args {
-			if arg == lu.def {
+			if arg == u.def {
 				i = idx
 				break
 			}
@@ -88,9 +93,9 @@ func (lu *user) replaceUse(newUse *Value) {
 		} else {
 			panic("not a valid use")
 		}
-	} else if block := lu.block; block != nil {
+	} else if block := u.block; block != nil {
 		for idx, ctrl := range block.ControlValues() {
-			if ctrl == lu.def {
+			if ctrl == u.def {
 				block.ReplaceControl(idx, newUse)
 				break
 			}
@@ -98,6 +103,42 @@ func (lu *user) replaceUse(newUse *Value) {
 	} else {
 		panic("loop def is neither used by value nor by block")
 	}
+}
+
+// buildDefUses builds def-use map for given defs Values
+func buildDefUses(fn *Func, defs []*Value) defUses {
+	// TODO: Could we maintain def-use across whole compilation instead of in-place
+	// creation as it is widely used?
+	defUses := make(defUses, 0)
+	for _, def := range defs {
+		if _, exist := defUses[def]; !exist {
+			// Many duplicate definitions, avoid redundant mem allocations
+			defUses[def] = make([]*user, 0, def.Uses)
+		}
+	}
+	for _, block := range fn.Blocks {
+		for _, val := range block.Values {
+			for _, arg := range val.Args {
+				if _, exist := defUses[arg]; exist {
+					defUses[arg] = append(defUses[arg], &user{arg, val, nil})
+				}
+			}
+		}
+		for _, ctrl := range block.ControlValues() {
+			if _, exist := defUses[ctrl]; exist {
+				defUses[ctrl] = append(defUses[ctrl], &user{ctrl, nil, block})
+			}
+		}
+	}
+	return defUses
+}
+
+const ProxyPhiAux string = ".proxyphi"
+
+type lcssa struct {
+	fn *Func
+	// TODO: how about e2 multiple phis?
+	e2phi map[*Block]*Value // exit block to proxy phi mapping
 }
 
 // containsBlock returns true if the block is part of the loop or part of the inner
@@ -114,14 +155,6 @@ func (ln *loopnest) containsBlock(loop *loop, block *Block) bool {
 		}
 	}
 	return false
-}
-
-const ProxyPhiAux string = ".proxyphi"
-
-type lcssa struct {
-	fn *Func
-	// TODO: how about e2 multiple phis?
-	e2phi map[*Block]*Value // exit block to proxy phi mapping
 }
 
 func isProxyPhi(val *Value) bool {
@@ -156,9 +189,9 @@ func (lc *lcssa) allocateProxyPhi(exit *Block, loopDef ...*Value) *Value {
 
 // placeProxyPhi places the proxy phi at loop exits to make sure all uses of a
 // loop defined value are dominated by the proxy phi
-func (lc *lcssa) placeProxyPhi(ln *loopnest, loop *loop, defUses defUses) bool {
+func (lc *lcssa) placeProxyPhi(ln *loopnest, loop *loop, defs []*Value) bool {
 	sdom := ln.sdom // lcssa does not wire up CFG, reusing sdom is okay
-
+	defUses := buildDefUses(ln.f, defs)
 	keys := make([]*Value, 0)
 	for k, _ := range defUses {
 		keys = append(keys, k)
@@ -168,8 +201,8 @@ func (lc *lcssa) placeProxyPhi(ln *loopnest, loop *loop, defUses defUses) bool {
 	})
 
 	for _, loopDef := range keys {
-		// multiple uses shares the same close phi if they live in same exit block
-		// only users of the same loop def could share proxy phi
+		// multiple uses shares the same proxy phi if they live in same exit block
+		// also note that only users of the same loop def could share proxy phi
 		lc.e2phi = make(map[*Block]*Value, 0)
 		for _, use := range defUses[loopDef] {
 			useBlock := use.useBlock()
@@ -280,35 +313,16 @@ func (fn *Func) BuildLoopClosedForm(ln *loopnest, loop *loop) bool {
 	}
 
 	// Look for out-of-loop users of these loop defs
-	// TODO: Could we maintain def-use across whole compilation as it is widely used?
-	defUses := make(defUses, 0)
+	defs := make([]*Value, 0)
 	for _, block := range domBlocks {
 		for _, val := range block.Values {
 			if val.Uses == 0 {
 				continue
 			}
-			if _, exist := defUses[val]; !exist {
-				// Many duplicate definitions, avoid redundant mem allocations
-				defUses[val] = make([]*user, 0, val.Uses)
-			}
+			defs = append(defs, val)
 		}
 	}
-	for _, block := range fn.Blocks {
-		for _, val := range block.Values {
-			for _, arg := range val.Args {
-				if _, exist := defUses[arg]; exist {
-					defUses[arg] = append(defUses[arg], &user{arg, val, nil})
-				}
-			}
-		}
-		for _, ctrl := range block.ControlValues() {
-			if _, exist := defUses[ctrl]; exist {
-				defUses[ctrl] = append(defUses[ctrl], &user{ctrl, nil, block})
-			}
-		}
-	}
-
 	// For every use of loop def, place the proxy phi at the proper block
 	lc := &lcssa{fn, nil}
-	return lc.placeProxyPhi(ln, loop, defUses)
+	return lc.placeProxyPhi(ln, loop, defs)
 }
