@@ -236,6 +236,7 @@ const (
 )
 
 type loopTrivialVal struct {
+	cloning  bool
 	valBlock *Block
 	visited  map[*Value]*Value
 }
@@ -307,76 +308,134 @@ func (t *loopTrivialVal) move(val *Value, dest *Block, depth int) {
 	// t.visited[val] = nil // mark as visited
 }
 
-func (t *loopTrivialVal) update(val *Value, loopHeader *Block, loopPhiIdx, depth int) {
+func (t *loopTrivialVal) update(val *Value, loop *loop, loopPhiIdx, depth int) {
 	assert(depth < MaxDepth, "excess max search depth")
 	if val.Op == OpPhi || val.Block != t.valBlock {
 		return
 	}
 	for iarg, arg := range val.Args {
-		if arg.Op == OpPhi && arg.Block == loopHeader {
+		// If arg of val is a Phi which lives in loop header?
+		if arg.Op == OpPhi && arg.Block == loop.header {
+			// If expected incoming argument of arg is not visited yet, this implies
+			// that it may comes from loop latch, in this case
 			newUse := arg.Args[loopPhiIdx]
-			// loop header:
-			//   v1 = Phi v2 v3
-			//   ...
-			//   v3 = Rsh64x64 v1 ..
-			if isomorphic, exist := t.visited[newUse]; !exist {
-				val.SetArg(iarg, newUse)
-			} else {
-				// If there is a phi that lives in loop header depends on loop
-				// def while such loop def reversely depends on phi, we need to
-				// clone the whole loop def and Phi(this is different from normal
-				// trivial loop def), and update cloned ones. The original phi
-				// must be preserved because it may used by other values inside
-				// loop, update on that value slightly changes semantic. Here is
-				// a simple example:
-				//
+			if _, exist := t.visited[newUse]; !exist {
+				// Normal case, update as usual
 				// loop header:
-				//  v1 = Phi(0, v2)
-				//  v2 = Add64(v1, 1)
-				//  If v2 <3 -> loop latch, loop exit
-				//
-				// after loop rotation:
-				// loop guard:
-				//  v4 = Add64(v1, 1)
-				//
-				// loop header:
-				// 	v2 = Phi(0, v2)
-				// 	...
+				// v1 = phi(0, v4)
+				// v2 = v1 +1
+				// If v2 < 3 -> loop body, loop exit
 				//
 				// loop latch:
-				//  v3 = Phi(<>,v2) ;; Cloned!
-				// 	v2 = Add64(v1, 1)
-				//  If v2 < 3 -> loop header, loop exit
+				// v4 = ...
+
+				// loop header:
+				// v1 = phi(0, v4)
 				//
-				narg := arg.copyIntoWithXPos(t.valBlock, arg.Pos)
-				narg.SetArg(1-loopPhiIdx, isomorphic)
-				val.SetArg(iarg, narg)
+				// loop latch:
+				// v4 = ...
+				// v2 = v4 +1
+				// If v2 < 3 -> loop header, loop exit
+				val.SetArg(iarg, newUse)
+			} else {
+				// If there is a value v1 in the loop header that is used to define
+				// a v2 phi in the same basic block, and this v2 phi is used in
+				// turn to use the value v1, there is a cyclic dependencies, i.e.
+				//
+				// loop header:
+				// v1 = phi(0, v2)
+				// v2 = v1 +1
+				// If v2 < 3 -> loop body, loop exit
+				//
+				// In this case, we need to first convert the v1 phi into its
+				// normal form, where its back edge parameter uses the value defined
+				// in the loop latch.
+				//
+				// loop header:
+				// v1 = phi(0, v3)
+				// v2 = v1 + 1
+				// If v2 < 3 -> loop body, loop exit
+				//
+				// loop latch:
+				// v3 = Copy v2
+				//
+				// After this, the strange v1 phi is treated in the same way as
+				// other phis. After moving the conditional test to the loop latch,
+				// the relevant parameters will also be updated, i.e., v2 will
+				// use v3 instead of v1 phi:
+				//
+				// loop header:
+				// v1 = phi(0, v3)
+				//
+				// loop latch:
+				// v3 = Copy v2
+				// v2 = v3 + 1
+				// If v2 < 3 -> loop header, loop exit
+				//
+				// Finally, since v3 is use of v2, after moving v2 to the loop latch,
+				// updateMovedValues will update these uses and insert a new v4 Phi.
+				//
+				// loop header:
+				// v1 = phi(0, v3)
+				// v4 = phi(guard, v2)
+				//
+				// loop latch:
+				// v3 = Copy v4
+				// v2 = v3 + 1
+				// If v2 < 3 -> loop header, loop exit
+
+				// Copy from val and place it to loop latch
+				copy := loop.latch.Func.newValueNoBlock(OpCopy, arg.Type, arg.Pos)
+				if t.cloning {
+					// If we are cloning, we need to be very careful when updating
+					// the clonee, not the clone, otherwise, it can lead to disastrous
+					// circular dependencies
+					fmt.Printf(">>>%v\n", loop.latch.Func.Name)
+					for k, v := range t.visited {
+						if v == val {
+							copy.SetArgs1(k)
+							break
+						}
+					}
+					assert(len(copy.Args) == 1, "can not found clone from clonee")
+				} else {
+					fmt.Printf(">>>2%v\n", loop.latch.Func.Name)
+					copy.SetArgs1(newUse)
+				}
+				loop.latch.placeValue(copy)
+				// Replace incoming argument of loop phi to copied value
+				arg.SetArg(loopPhiIdx, copy)
+				// Update val to use copied value as usual
+				val.SetArg(iarg, copy)
+				fmt.Printf("UPdate insert %v %v\n", copy.LongString(), val.LongString())
 			}
 		} else {
-			t.update(arg, loopHeader, loopPhiIdx, depth+1)
+			t.update(arg, loop, loopPhiIdx, depth+1)
 		}
 	}
 }
 
-func cloneTrivial(val *Value, dest *Block, loopHeader *Block, loopPhiIdx int) (*Value, map[*Value]*Value) {
+func cloneTrivial(val *Value, dest *Block, loop *loop, loopPhiIdx int) (*Value, map[*Value]*Value) {
 	t := &loopTrivialVal{
+		cloning:  true,
 		valBlock: val.Block,
 		visited:  make(map[*Value]*Value),
 	}
 	clone := t.clone(val, dest, InitDepth)
 	t.valBlock = dest
-	t.update(clone, loopHeader, loopPhiIdx, InitDepth) // update cloned value
+	t.update(clone, loop, loopPhiIdx, InitDepth) // update cloned value
 	return clone, t.visited
 }
 
-func moveTrivial(val *Value, dest *Block, loopHeader *Block, cloned map[*Value]*Value, loopPhiIdx int) {
+func moveTrivial(val *Value, dest *Block, loop *loop, cloned map[*Value]*Value, loopPhiIdx int) {
 	t := &loopTrivialVal{
+		cloning:  false,
 		valBlock: val.Block,
 	}
 	t.move(val, dest, InitDepth)
 	t.valBlock = dest
 	t.visited = cloned
-	t.update(val, loopHeader, loopPhiIdx, InitDepth) // update moved value
+	t.update(val, loop, loopPhiIdx, InitDepth) // update moved value
 }
 
 func isomorphic(block *Block, a, b *Value, depth int) bool {
@@ -503,7 +562,7 @@ func (loop *loop) moveCond(cloned map[*Value]*Value) *Value {
 	// 	return cond, moved
 	// }
 	assert(cond.Op != OpPhi, "why not")
-	moveTrivial(cond, loop.latch, loop.header, cloned, LoopLatch2HeaderPredIdx)
+	moveTrivial(cond, loop.latch, loop, cloned, LoopLatch2HeaderPredIdx)
 	return cond
 }
 
@@ -594,9 +653,10 @@ func (loop *loop) updateLoopUse(fn *Func) {
 		assert(len(val.Args) == len(loopExit.Preds)-1, "less than loop exit preds %v", val)
 
 		mergeArgs := make([]*Value, len(loopExit.Preds))
-		var g2eArg *Value // new guard to exit path
+		var g2eArg *Value // which reflects the path from loop guard to exit
 
 		// Visit all arguments of the loop closed phi
+		// TODO: FOR PHI,maybe simply swap args?
 		for iarg, arg := range val.Args {
 			mergeArgs[iarg] = arg
 			exitPred := loopExit.Preds[iarg].b
@@ -614,44 +674,16 @@ func (loop *loop) updateLoopUse(fn *Func) {
 					backedgeIdx := 1 - guardIdx
 
 					if arg.Op != OpPhi {
-						found := false
-						// for _, v := range loop.latch.Values {
-						// 	if isomorphic(loop.latch, v, arg, 0) {
-						// 		fmt.Printf("@@F1%v %v ##%v\n", v.LongString(), arg.LongString(), fn.Name)
-						// 		mergeArgs[iarg] = v
-						// 		found = true
-						// 		break
-						// 	} else {
-						// 		fmt.Printf("Diff1%v/%v\n", v.LongString(), arg.LongString())
-						// 	}
-						// }
-						if !found {
-							if splitB1 == nil {
-								splitB1 = splitCritical(fn, loop.latch, loop.exit)
-							}
-							backedgeArg, _ := cloneTrivial(arg, splitB1, loop.header, backedgeIdx)
-							// updateTrivial(loop.header, splitB1, backedgeArg, backedgeIdx, 0)
-							mergeArgs[iarg] = backedgeArg
+						if splitB1 == nil {
+							splitB1 = splitCritical(fn, loop.latch, loop.exit)
 						}
-						found = false
-						// for _, v := range loop.guard.Values {
-						// 	if isomorphic(loop.guard, v, arg, 0) {
-						// 		fmt.Printf("@@F1%v %v ##%v\n", v.LongString(), arg.LongString(), fn.Name)
-						// 		g2eArg = v
-						// 		found = true
-						// 		break
-						// 	} else {
-						// 		fmt.Printf("Diff2%v/%v\n", v.LongString(), arg.LongString())
-						// 	}
-						// }
-						if !found {
-							if splitB2 == nil {
-								splitB2 = splitCritical(fn, loop.guard, loop.exit)
-							}
-							guardArg, _ := cloneTrivial(arg, splitB2, loop.header, guardIdx)
-							// updateTrivial(loop.header, splitB2, guardArg, guardIdx, 0)
-							g2eArg = guardArg
+						backedgeArg, _ := cloneTrivial(arg, splitB1, loop, backedgeIdx)
+						mergeArgs[iarg] = backedgeArg
+						if splitB2 == nil {
+							splitB2 = splitCritical(fn, loop.guard, loop.exit)
 						}
+						guardArg, _ := cloneTrivial(arg, splitB2, loop, guardIdx)
+						g2eArg = guardArg
 					} else {
 						backedgeArg := arg.Args[backedgeIdx]
 						guardArg := arg.Args[guardIdx]
@@ -714,6 +746,8 @@ func (loop *loop) updateMovedValues(fn *Func, ln *loopnest, cloned map[*Value]*V
 			}
 			// Since LCSSA ensures that all uses of loop defined values are in loop
 			// if ln.b2l[useBlock.ID] == loop || ln.containsBlock(loop, useBlock) {
+			// Original Values are moved to loop latch, any uses of them should be
+			// replaced by newly inserted Phi.
 			// Create phi at loop header, merge control flow from loop guard and
 			// loop latch, and replace use with such phi. If phi already exists,
 			// use it instead of creating a new one.
@@ -803,6 +837,7 @@ func loopRotate(f *Func) {
 
 // TODO: 新增测试用例
 // TODO: 压力测试，在每个pass之后都执行loop rotate；执行多次loop rotate；打开ssacheck；确保无bug
+// TODO: USE SWAP WHEN POSSIBLE
 // 33064/36000 rotated/bad before lower
 // 39022/25245 rotated/bad before lower, lcssa
 // 46986/17281 rotated/bad before lower, lcssa
@@ -843,6 +878,9 @@ func (fn *Func) RotateLoop(loop *loop) bool {
 	}
 	assert(len(loop.header.ControlValues()) == 1, "more than 1 ctrl values")
 	cond := loop.header.Controls[0]
+	if cond.Op == OpPhi {
+		return false
+	}
 
 	// Rewire loop header to loop body unconditionally
 	loop.rewireLoopHeader(exitIdx)
@@ -861,18 +899,18 @@ func (fn *Func) RotateLoop(loop *loop) bool {
 	loop.rewireLoopEntry(sdom, loopGuard)
 
 	// Clone old conditional test and its arguments to control loop guard
-	guardCond, cloned := cloneTrivial(cond, loop.guard, loop.header, LoopGuard2HeaderPredIdx)
+	guardCond, cloned := cloneTrivial(cond, loop.guard, loop, LoopGuard2HeaderPredIdx)
 	// guardCond = loop.updateCond(guardCond, LoopGuard2HeaderPredIdx)
 
 	// Rewire loop guard to original loop header and loop exit
 	loop.rewireLoopGuard(fn.Sdom(), guardCond, exitIdx)
 
-	// CFG changes are done, then update data dependencies accordingly
+	// CFG changes are all done here, then update data dependencies accordingly
 	// Update cond to use updated Phi as arguments
 	// Move conditional test from loop header to loop latch
 	// loop.moveCond()
 	// loop.updateCond(cond, LoopLatch2HeaderPredIdx)
-	moveTrivial(cond, loop.latch, loop.header, cloned, LoopLatch2HeaderPredIdx)
+	moveTrivial(cond, loop.latch, loop, cloned, LoopLatch2HeaderPredIdx)
 
 	// Update chain of the moved Values
 	loop.updateMovedValues(fn, ln, cloned)

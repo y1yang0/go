@@ -54,28 +54,13 @@ func (u *user) String() string {
 	}
 }
 
-// useBlock returns the block where the def is used. If the use is type of Phi,
-// then the use block is the corresponding incoming block
+// useBlock returns the block where the def is used
 func (u *user) useBlock() *Block {
-	var ub *Block
-	if val := u.val; val != nil {
-		if val.Op == OpPhi {
-			// Used by Phi? Use corresponding incoming block as the real use
-			// block, because def does not really dominate Phi
-			for ipred, pred := range val.Args {
-				if pred == u.def {
-					ub = val.Block.Preds[ipred].b
-					break
-				}
-			}
-		} else {
-			ub = val.Block
-		}
+	if u.val != nil {
+		return u.val.Block
 	} else {
-		ub = u.block
+		return u.block
 	}
-	assert(ub != nil, "no use block")
-	return ub
 }
 
 // replaceUse replaces the use of def with new use
@@ -139,6 +124,31 @@ type lcssa struct {
 	fn *Func
 	// TODO: how about e2 multiple phis?
 	e2phi map[*Block]*Value // exit block to proxy phi mapping
+}
+
+// findUseBlock returns the block where the def is used. If the use is type of Phi,
+// then the use block is the corresponding incoming block. Note that this is ONLY
+// valid in context of LCSSA.
+func findUseBlock(u *user) *Block {
+	var ub *Block
+	if val := u.val; val != nil {
+		if val.Op == OpPhi {
+			// Used by Phi? Use corresponding incoming block as the real use
+			// block, because def does not really dominate Phi
+			for ipred, pred := range val.Args {
+				if pred == u.def {
+					ub = val.Block.Preds[ipred].b
+					break
+				}
+			}
+		} else {
+			ub = val.Block
+		}
+	} else {
+		ub = u.block
+	}
+	assert(ub != nil, "no use block")
+	return ub
 }
 
 // containsBlock returns true if the block is part of the loop or part of the inner
@@ -205,7 +215,7 @@ func (lc *lcssa) placeProxyPhi(ln *loopnest, loop *loop, defs []*Value) bool {
 		// also note that only users of the same loop def could share proxy phi
 		lc.e2phi = make(map[*Block]*Value, 0)
 		for _, use := range defUses[loopDef] {
-			useBlock := use.useBlock()
+			useBlock := findUseBlock(use)
 			// Use is part of current loop? Skip it
 			if ln.b2l[useBlock.ID] == loop {
 				continue
@@ -271,7 +281,8 @@ func (lc *lcssa) placeProxyPhi(ln *loopnest, loop *loop, defs []*Value) bool {
 				// dominance frontier and see if we can reach to the use block,
 				// if so, we place the proxy phi at the loop exit that is closest
 				// to the use block.
-				// TODO: This is rare, but it does happen, give up for now.
+				// TODO: This is rare, but it does happen, give up for now as it's
+				// hard to handle.
 				return false
 			}
 		}

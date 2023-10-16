@@ -427,9 +427,49 @@ func licm(f *Func) {
 	// if f.Name != "(*Frames).Next" {
 	// 	return
 	// }
-	if f.Name != "getempty" {
-		return
-	}
+	// if f.Name != "getempty" {
+	// 	return
+	// }
+	// if f.Name != "preprocess" && f.Name != "(*Input).macroDefinition" {
+	// 	return
+	// }
+	// if f.Name != "appendInlinedPos" &&
+	// 	f.Name != "FlushLoggedOpts" &&
+	// 	f.Name != "Node" &&
+	// 	f.Name != "format" &&
+	// 	f.Name != "hasUnsortedImports" &&
+	// 	f.Name != "(*Input).include" &&
+	// 	f.Name != "(*Input).invokeMacro" &&
+	// 	f.Name != "lookup" &&
+	// 	f.Name != "(*Stack).Next" &&
+	// 	f.Name != "predefine" &&
+	// 	f.Name != "(*Input).Next" &&
+	// 	f.Name != "(*Input).argsFor" &&
+	// 	f.Name != "(*Input).macroDefinition" &&
+	// 	f.Name != "(*HashDebug).log" &&
+	// 	f.Name != "(*Timings).Write" &&
+	// 	f.Name != "ParseFlags" &&
+	// 	f.Name != "(*HashDebug).excluded" &&
+	// 	f.Name != "isnumber" &&
+	// 	f.Name != "hashString" &&
+	// 	f.Name != "Exit" &&
+	// 	f.Name != "(*HashDebug).match" &&
+	// 	f.Name != "commonPrefix" &&
+	// 	f.Name != "FlushErrors" &&
+	// 	f.Name != "lines.write" &&
+	// 	f.Name != "parseSpectre" &&
+	// 	f.Name != "(*HashDebug).matchAndLog" &&
+	// 	f.Name != "NewHashDebug" &&
+	// 	f.Name != "readImportCfg" &&
+	// 	f.Name != "(*lines).add" &&
+	// 	f.Name != "AdjustStartingHeap" &&
+	// 	f.Name != "assemble" &&
+	// 	f.Name != "preprocess" &&
+	// 	f.Name != "assemble.func1" &&
+	// 	f.Name != "map.init.0" &&
+	// 	f.Name != "setPCs" {
+	// 	return
+	// }
 
 	loopnest := f.loopnest()
 	if loopnest.hasIrreducible {
