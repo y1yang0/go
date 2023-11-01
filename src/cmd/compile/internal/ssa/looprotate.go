@@ -627,19 +627,91 @@ func (loop *loop) rewireLoopEntry(loopGuard *Block) {
 	entry.AddEdgeTo(loopGuard)
 }
 
-// splitCritical splits the critical edge from start to end and insert an empty
-// block in the middle of them.
-func splitCritical(fn *Func, start, end *Block) *Block {
-	if len(start.Succs) < 2 || len(end.Preds) < 2 {
-		fn.Fatalf("Not a critical edge from %v to %v", start, end)
+// insertBetween inserts an empty block in the middle of start and end block.
+// If such block already exists, it will be returned instead.
+func insertBetween(fn *Func, start, end *Block) *Block {
+	for _, succ := range start.Succs {
+		if succ.b == end {
+			break
+		} else if succ.b.Succs[0].b == end {
+			return succ.b
+		}
 	}
-
 	empty := fn.NewBlock(BlockPlain)
 	empty.Preds = make([]Edge, 1, 1)
 	empty.Succs = make([]Edge, 1, 1)
 	start.ReplaceSucc(end, empty, 0)
 	end.ReplacePred(start, empty, 0)
 	return empty
+}
+
+// See if loop def no longer dominates arguments of such proxy phi and update it
+func (loop *loop) updateProxyPhi(sdom SparseTree, val *Value) {
+	// Walk the loop exit, find all loop closed phi
+	loopExit := val.Block
+	isMainLoopExit := loopExit == loop.exit
+	fn := val.Block.Func
+	mergeArgs := make([]*Value, len(loopExit.Preds))
+	copy(mergeArgs, val.Args)
+	var g2eArg *Value // which reflects the path from loop guard to exit
+	sdom = fn.Sdom()
+
+	// Visit all arguments of the loop closed phi
+	for iarg, arg := range val.Args {
+		exitPred := loopExit.Preds[iarg].b
+		// If loop header still dominate predecessor of this loop exit or this
+		// predecessor is the loop latch?
+		if (isMainLoopExit && sdom.IsAncestorEq(loop.latch, exitPred)) ||
+			(!isMainLoopExit && sdom.isAncestor(loop.header, exitPred)) {
+			// If arg strictly dominates loop header, use it directly
+			if sdom.isAncestor(arg.Block, loop.header) {
+				g2eArg = arg
+			} else if arg.Block == loop.header {
+				guardIdx := 0
+				if loop.header.Preds[0].b == loop.latch {
+					guardIdx = 1 // then index 1 is loop guard
+				}
+				backedgeIdx := 1 - guardIdx
+
+				if arg.Op != OpPhi {
+					holderB1 := insertBetween(fn, exitPred, loopExit)
+					backedgeArg, _ := loop.cloneTrivial(arg, holderB1, backedgeIdx)
+					mergeArgs[iarg] = backedgeArg
+					if isMainLoopExit {
+						holderB2 := insertBetween(fn, loop.guard, loop.exit)
+						guardArg, _ := loop.cloneTrivial(arg, holderB2, guardIdx)
+						g2eArg = guardArg
+					}
+				} else {
+					backedgeArg := arg.Args[backedgeIdx]
+					mergeArgs[iarg] = backedgeArg
+					if isMainLoopExit {
+						guardArg := arg.Args[guardIdx]
+						g2eArg = guardArg
+					}
+				}
+			} else {
+				// Otherwise it's insane
+				fn.Fatalf("loop def %v(%v) is incorrectly used by %v",
+					arg, loop.LongString(), val.LongString())
+			}
+			break
+		}
+	}
+
+	// Update old loop closed phi arguments right now
+	if isMainLoopExit {
+		if g2eArg == nil {
+			fn.Fatalf("Can not determine new arg of Phi for guard to exit path")
+		}
+		mergeArgs[len(mergeArgs)-1] = g2eArg
+	}
+	oldValStr := val.LongString()
+	val.resetArgs()
+	val.AddArgs(mergeArgs...)
+	// if fn.pass.debug > 1 {
+	fmt.Printf("== Update loop use %s to %v %v\n", oldValStr, val.LongString(), val.Block.Preds)
+	// }
 }
 
 // Now that the loop header no longer dominates the loop exit and the loop exit
@@ -655,72 +727,23 @@ func splitCritical(fn *Func, start, end *Block) *Block {
 func (loop *loop) updateLoopUse(fn *Func) {
 	fn.invalidateCFG()
 	sdom := fn.Sdom()
-	loopExit := loop.exit
-	var splitB1, splitB2 *Block
-	// Walk the loop exit, find all loop closed phi
-	for _, val := range loopExit.Values {
-		if val.Op != OpPhi {
+	visited := make(map[*Block]bool) // in case of duplciated loop exit
+	for _, loopExit := range loop.exits {
+		if _, exist := visited[loopExit]; exist {
 			continue
 		}
-		assert(len(val.Args) == len(loopExit.Preds)-1, "less than loop exit preds")
-
-		mergeArgs := make([]*Value, len(loopExit.Preds))
-		var g2eArg *Value // which reflects the path from loop guard to exit
-
-		// Visit all arguments of the loop closed phi
-		for iarg, arg := range val.Args {
-			mergeArgs[iarg] = arg
-			exitPred := loopExit.Preds[iarg].b
-			// If incoming argument of loop closed phi reflects the edge of
-			// loop latch to loop exit, then update it
-			if loop.latch == exitPred || splitB1 == exitPred {
-				// If arg strictly dominates loop header, use it directly
-				if sdom.isAncestor(arg.Block, loop.header) {
-					g2eArg = arg
-				} else if arg.Block == loop.header {
-					guardIdx := 0
-					if loop.header.Preds[0].b == loop.latch {
-						guardIdx = 1 // then index 1 is loop guard
-					}
-					backedgeIdx := 1 - guardIdx
-
-					if arg.Op != OpPhi {
-						if splitB1 == nil {
-							splitB1 = splitCritical(fn, loop.latch, loop.exit)
-						}
-						backedgeArg, _ := loop.cloneTrivial(arg, splitB1, backedgeIdx)
-						mergeArgs[iarg] = backedgeArg
-						if splitB2 == nil {
-							splitB2 = splitCritical(fn, loop.guard, loop.exit)
-						}
-						guardArg, _ := loop.cloneTrivial(arg, splitB2, guardIdx)
-						g2eArg = guardArg
-					} else {
-						backedgeArg := arg.Args[backedgeIdx]
-						guardArg := arg.Args[guardIdx]
-						mergeArgs[iarg] = backedgeArg
-						g2eArg = guardArg
-					}
-				} else {
-					// Otherwise it's insane, die
-					fn.Fatalf("loop def %v(%v) is incorrectly used by %v",
-						arg, loop.LongString(), val.LongString())
-				}
+		// The loop exit is still dominated by loop header, no need to update
+		if sdom.isAncestor(loop.header, loopExit) {
+			continue
+		}
+		// Walk the loop exit, find all loop closed proxy phi
+		for _, val := range loopExit.Values {
+			if val.Op != OpPhi {
+				continue
 			}
+			loop.updateProxyPhi(sdom, val)
 		}
-
-		if g2eArg == nil {
-			fn.Fatalf("Can not determine new arg of Phi for guard to exit path")
-		}
-
-		// Update old loop closed phi arguments right now
-		mergeArgs[len(loop.exit.Preds)-1] = g2eArg
-		oldValStr := val.LongString()
-		val.resetArgs()
-		val.AddArgs(mergeArgs...)
-		if fn.pass.debug > 1 {
-			fmt.Printf("== UpdateLoopUse %s to %v\n", oldValStr, val.LongString())
-		}
+		visited[loopExit] = true
 	}
 }
 
@@ -807,7 +830,7 @@ func (loop *loop) updateMovedUses(fn *Func, cloned map[*Value]*Value) {
 				newUse = phi
 			}
 			if fn.pass.debug > 1 {
-				fmt.Printf("== UpdateMovedUse %v %v\n", use, newUse.LongString())
+				fmt.Printf("== Update moved use %v %v\n", use, newUse.LongString())
 			}
 			use.replaceUse(newUse)
 		}
@@ -855,40 +878,6 @@ func (loop *loop) CreateLoopLand(fn *Func) bool {
 	return true
 }
 
-// loopRotate rotates all loops to become a do-while style loop, this is used for
-// testing purpose.
-func loopRotate(fn *Func) {
-	// if fn.Name != "forEachP" {
-	// 	return
-	// }
-	loopnest := fn.loopnest()
-
-	if loopnest.hasIrreducible {
-		return
-	}
-	if len(loopnest.loops) == 0 {
-		return
-	}
-	loopnest.assembleChildren()
-	loopnest.findExits()
-	lcssa := make(map[*loop]bool, 0)
-
-	for _, loop := range loopnest.loops {
-		lcssa[loop] = fn.BuildLoopClosedForm(loopnest, loop)
-	}
-	for _, loop := range loopnest.loops {
-		if yes := lcssa[loop]; yes {
-			fn.RotateLoop(loop)
-		}
-	}
-
-	// LCSSA destruct
-	phielim(fn)
-	deadcode(fn)
-}
-
-// 59690/7950 rotated/exotic
-// 61489/6381 rotated/exotic
 // RotateLoop rotates the original loop to become a do-while style loop, it returns
 // true if loop is rotated, false otherwise.
 func (fn *Func) RotateLoop(loop *loop) bool {
@@ -949,9 +938,9 @@ func (fn *Func) RotateLoop(loop *loop) bool {
 	// Gosh, loop is rotated
 	loop.verifyRotatedForm(fn)
 
-	if fn.pass.debug > 0 {
-		fmt.Printf("%v rotated in %v\n", loop.LongString(), fn.Name)
-	}
+	// if fn.pass.debug > 0 {
+	fmt.Printf("%v rotated in %v\n", loop.LongString(), fn.Name)
+	// }
 	fn.invalidateCFG()
 	return true
 }

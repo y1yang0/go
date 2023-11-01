@@ -258,9 +258,10 @@ func (lc *lcssa) placeProxyPhi(ln *loopnest, loop *loop, defs []*Value) bool {
 					// Replace all uses of loop def with new close phi
 					lcphi := lc.allocateProxyPhi(domExit, loopDef)
 					use.replaceUse(lcphi)
-					if ln.f.pass.debug > 1 {
-						fmt.Printf("== Replace use %v with proxy phi %v\n", use, lcphi)
-					}
+					// if ln.f.pass.debug > 1 {
+					fmt.Printf("== Replace use %v with proxy phi %v\n",
+						use, lcphi.LongString())
+					// }
 					continue
 				}
 
@@ -293,9 +294,10 @@ func (lc *lcssa) placeProxyPhi(ln *loopnest, loop *loop, defs []*Value) bool {
 					// Merge them at loop use block by yet another loop closed phi
 					lcphi := lc.allocateProxyPhi(useBlock, phis...)
 					use.replaceUse(lcphi)
-					if ln.f.pass.debug > 1 {
-						fmt.Printf("== Replace use %v with proxy phi %v\n", use, lcphi)
-					}
+					// if ln.f.pass.debug > 1 {
+					fmt.Printf("== Replace use %v with proxy phi %v\n",
+						use, lcphi.LongString())
+					// }
 					continue
 				}
 
@@ -313,15 +315,17 @@ func (lc *lcssa) placeProxyPhi(ln *loopnest, loop *loop, defs []*Value) bool {
 			}
 		}
 	}
+
+	// Since we may have placed memory proxy phi at some loop exits, which
+	// use loop def and produce new memory. If this block is a predecessor
+	// of another loop exit, we need to use memory proxy phi instead of loop
+	// def as a parameter of new proxy phi.
+	lc.fixProxyPhiMem(ln.f)
 	return true
 }
 
 // BuildLoopClosedForm builds loop closed SSA Form upon original loop form, this is
 // the cornerstone of other loop optimizations such as LICM and loop unswitching
-//
-// 5439/64298 bad/good build
-// 4382/65379 bad/good inner loop exit belongs to current loop
-// 1186/68591 bad/good lcssa allow multiple exit
 func (fn *Func) BuildLoopClosedForm(ln *loopnest, loop *loop) bool {
 	if len(loop.exits) == 0 {
 		return true
@@ -362,13 +366,5 @@ func (fn *Func) BuildLoopClosedForm(ln *loopnest, loop *loop) bool {
 	}
 	// For every use of loop def, place the proxy phi at the proper block
 	lc := &lcssa{fn, nil, nil}
-	success := lc.placeProxyPhi(ln, loop, defs)
-	if success {
-		// Since we may have placed memory proxy phi at some loop exits, which
-		// use loop def and produce new memory. If this block is a predecessor
-		// of another loop exit, we need to use memory proxy phi instead of loop
-		// def as a parameter of new proxy phi.
-		lc.fixProxyPhiMem(fn)
-	}
-	return success
+	return lc.placeProxyPhi(ln, loop, defs)
 }

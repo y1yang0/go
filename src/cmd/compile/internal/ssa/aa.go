@@ -24,8 +24,7 @@ import "fmt"
 //	#3 a.f aliases with *b if they have same types
 //	#4 a[i] aliases with *b if they have same types
 //	#5 a.f never aliases with b[i]
-//	#6 a[i] aliases with b[j] if a==b or
-//	  #6' a[c1] never aliases with b[c2] if c1 != c2
+//	#6 a[i] aliases with b[j] if a==b
 //	#7 a aliases with b if they have same types
 type AliasType uint
 
@@ -45,15 +44,6 @@ func (at AliasType) String() string {
 		return fmt.Sprintf("NoAlias")
 	}
 	return fmt.Sprintf("Unknown")
-}
-
-func getArrayIndex(val *Value) int64 {
-	idx := val.Args[1]
-	switch idx.Op {
-	case OpConst64, OpConst32, OpConst16, OpConst8:
-		return idx.AuxInt64()
-	}
-	return -1
 }
 
 func sameType(a, b *Value) bool {
@@ -79,6 +69,7 @@ func GetMemoryAlias(a, b *Value) AliasType {
 	}
 
 	// #2 a.f aliases with b.g if f==g and a aliases with b
+	// TODO: Consider isSamePtr
 	if a.Op == OpOffPtr && b.Op == OpOffPtr {
 		off1 := a.AuxInt64()
 		off2 := b.AuxInt64()
@@ -127,19 +118,11 @@ func GetMemoryAlias(a, b *Value) AliasType {
 		return NoAlias
 	}
 
-	// #6 a[i] aliases with b[j] if a==b or
+	// #6 a[i] aliases with b[j] if a==b
 	if a.Op == OpPtrIndex && b.Op == OpPtrIndex {
 		at := GetMemoryAlias(a.Args[0], b.Args[0])
-		if at == MustAlias || at == MayAlias {
-			// #6' a[c1] never aliases with b[c2] if c1 != c2
-			c1 := getArrayIndex(a)
-			if c1 != -1 {
-				c2 := getArrayIndex(b)
-				if c2 != c1 {
-					return NoAlias
-				}
-			}
-		}
+		// Note that two array access may alias even if i != j in complie time
+		// because they may share the underlying slice.
 		return at
 	}
 

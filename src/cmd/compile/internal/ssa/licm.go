@@ -216,20 +216,6 @@ func (h *hoister) hoist(block *Block, val *Value) {
 // Value is considered as loop invariant if all its inputs are defined outside the loop
 // or all its inputs are loop invariants. Since loop invariant will immediately moved
 // to dominator block of loop, the first rule actually already implies the second rule
-//
-// baseline complex 3746, simple 69389, bound check 89
-// v1       complex 3801, simple 8795, bound check 23
-// v2       complex 4364, simple 8839, bound check 23
-// v3(getg) complex 4399, simple 8839, bound check 23
-// complex 4600, store16, load1897, vardef201,getg7, check23     ::v4 vardef
-// merged  4484, store16, load1866, nilcheck 519, boundcheck23
-// all     5803, store19, load2451, nilcheck 661, boundcheckNaN  use lcssa
-// all     5874, store19, load2476, nilcheck 661, boundcheckNaN  use lcssa
-// all     6951, store34, load2910, nilcheck 870, boundcheckNan  allow multiple preds of exit
-// all     7142, store34, load3011, nilcheck 914, boundcheckNan  loop exit belongs to current loop
-// all     7186, store34, load3023, nilcheck 918, boundcheckNan lcssa allow mutiple exit
-// all     simple 55260, complex 4538
-// all     simple 57369, complex 5233
 func (h *hoister) tryHoist(loop *loop, li *loopInvariants, val *Value) bool {
 	if hoisted, exist := h.hoisted[val]; exist {
 		return hoisted
@@ -414,7 +400,10 @@ func (h *hoister) fixMemoryState(loop *loop, startMem, endMem []*Value) {
 // licm stands for Loop Invariant Code Motion, it hoists expressions that computes
 // the same value outside loop
 func licm(f *Func) {
-	// if f.Name != "recovery" {
+	// if f.Name != "(*Env).InGroupingB" {
+	// 	return
+	// }
+	// if f.Name != "Name" {
 	// 	return
 	// }
 
@@ -448,6 +437,9 @@ func licm(f *Func) {
 
 		// Rotate the loop, it creates a home for hoistable Values
 		if !f.RotateLoop(loop) {
+			continue
+		}
+		if loop != nil {
 			continue
 		}
 
