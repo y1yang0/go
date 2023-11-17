@@ -177,6 +177,8 @@ func possibleConst(val *Value) bool {
 		OpSlicemask,
 		// safety check
 		OpIsNonNil,
+		// slice ops
+		OpSliceLen, OpSliceCap,
 		// not
 		OpNot:
 		return true
@@ -205,7 +207,7 @@ func possibleConst(val *Value) bool {
 		OpLeq64, OpLeq32, OpLeq16, OpLeq8,
 		OpLeq64U, OpLeq32U, OpLeq16U, OpLeq8U,
 		OpLeq32F, OpLeq64F,
-		OpEqB, OpNeqB,
+		OpEqB, OpNeqB, OpEqPtr, OpNeqPtr,
 		// shift
 		OpLsh64x64, OpRsh64x64, OpRsh64Ux64, OpLsh32x64,
 		OpRsh32x64, OpRsh32Ux64, OpLsh16x64, OpRsh16x64,
@@ -237,7 +239,8 @@ func (t *worklist) getLatticeCell(val *Value) lattice {
 func isConst(val *Value) bool {
 	switch val.Op {
 	case OpConst64, OpConst32, OpConst16, OpConst8,
-		OpConstBool, OpConst32F, OpConst64F:
+		OpConstBool, OpConst32F, OpConst64F,
+		OpConstString, OpConstNil, OpConstInterface, OpConstSlice:
 		return true
 	default:
 		return false
@@ -387,7 +390,8 @@ func (t *worklist) visitValue(val *Value) {
 	switch val.Op {
 	// they are constant values, aren't they?
 	case OpConst64, OpConst32, OpConst16, OpConst8,
-		OpConstBool, OpConst32F, OpConst64F: //TODO: support ConstNil ConstString etc
+		OpConstBool, OpConst32F, OpConst64F,
+		OpConstString, OpConstNil, OpConstInterface, OpConstSlice:
 		t.latticeCells[val] = lattice{constant, val}
 	// lattice value of copy(x) actually means lattice value of (x)
 	case OpCopy:
@@ -417,6 +421,8 @@ func (t *worklist) visitValue(val *Value) {
 		OpSlicemask,
 		// safety check
 		OpIsNonNil,
+		// slice ops
+		OpSliceLen, OpSliceCap,
 		// not
 		OpNot:
 		lt1 := t.getLatticeCell(val.Args[0])
@@ -454,7 +460,7 @@ func (t *worklist) visitValue(val *Value) {
 		OpLeq64, OpLeq32, OpLeq16, OpLeq8,
 		OpLeq64U, OpLeq32U, OpLeq16U, OpLeq8U,
 		OpLeq32F, OpLeq64F,
-		OpEqB, OpNeqB,
+		OpEqB, OpNeqB, OpEqPtr, OpNeqPtr,
 		// shift
 		OpLsh64x64, OpRsh64x64, OpRsh64Ux64, OpLsh32x64,
 		OpRsh32x64, OpRsh32Ux64, OpLsh16x64, OpRsh16x64,
