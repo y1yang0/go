@@ -45,7 +45,7 @@ func loopRotate(f *Func) {
 	if len(loopnest.loops) == 0 {
 		return
 	}
-
+	loopnest.findExits()
 	for _, loop := range loopnest.loops {
 		header := loop.header
 		// If loop rotation is already applied, loop latch should be right after
