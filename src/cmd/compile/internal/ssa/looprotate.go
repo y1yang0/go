@@ -604,7 +604,9 @@ func (loop *loop) rewireLoopGuard(guardCond *Value, exitIdx int) {
 	loopHeader := loop.header
 	loopGuard := loop.guard
 	loopGuard.Pos = loopHeader.Pos
-	loopGuard.Likely = loopHeader.Likely // respect header's branch predication
+	// Respect original branch predication, since condition test is moved to
+	// loop latch, use that instead
+	loopGuard.Likely = loop.latch.Likely
 	loopGuard.SetControl(guardCond)
 
 	var idx = -1
