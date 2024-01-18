@@ -517,7 +517,7 @@ var passes = [...]pass{
 	{name: "late nilcheck", fn: nilcheckelim2},
 	{name: "flagalloc", fn: flagalloc, required: true}, // allocate flags register
 	{name: "regalloc", fn: regalloc, required: true},   // allocate int & float registers + stack slots
-	{name: "layout loop", fn: layoutLoop},
+	// {name: "layout loop", fn: layoutLoop},
 	{name: "trim", fn: trim}, // remove empty blocks
 }
 
@@ -587,7 +587,7 @@ var passOrder = [...]constraint{
 	// regalloc needs flags to be allocated first.
 	{"flagalloc", "regalloc"},
 	// layout loop will confuse regalloc.
-	{"regalloc", "layout loop"},
+	// {"regalloc", "layout loop"},
 	// trim needs regalloc to be done first.
 	{"regalloc", "trim"},
 	// memcombine works better if fuse happens first, to help merge stores.
