@@ -379,7 +379,12 @@ func (f *Func) unCache(v *Value) {
 			case OpConstSlice:
 				aux = constSliceMagic
 			case OpConstString:
-				aux = constEmptyStringMagic
+				if f.unCacheLine(v, constEmptyStringMagic) {
+					return
+				}
+				if f.unCacheLine(v, constStringMagic) {
+					return
+				}
 			case OpConstInterface:
 				aux = constInterfaceMagic
 			}
@@ -678,6 +683,7 @@ const (
 	constInterfaceMagic   = 2233445566
 	constNilMagic         = 3344556677
 	constEmptyStringMagic = 4455667788
+	constStringMagic      = 5566778899
 )
 
 // ConstBool returns an int constant representing its argument.
@@ -719,6 +725,11 @@ func (f *Func) ConstNil(t *types.Type) *Value {
 func (f *Func) ConstEmptyString(t *types.Type) *Value {
 	v := f.constVal(OpConstString, t, constEmptyStringMagic, false)
 	v.Aux = StringToAux("")
+	return v
+}
+func (f *Func) ConstString(t *types.Type, s string) *Value {
+	v := f.constVal(OpConstString, t, constStringMagic, false)
+	v.Aux = StringToAux(s)
 	return v
 }
 func (f *Func) ConstOffPtrSP(t *types.Type, c int64, sp *Value) *Value {
