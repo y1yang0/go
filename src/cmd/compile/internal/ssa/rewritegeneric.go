@@ -2,11 +2,13 @@
 
 package ssa
 
-import "math"
-import "math/bits"
-import "cmd/internal/obj"
-import "cmd/compile/internal/types"
-import "cmd/compile/internal/ir"
+import (
+	"cmd/compile/internal/ir"
+	"cmd/compile/internal/types"
+	"cmd/internal/obj"
+	"math"
+	"math/bits"
+)
 
 func rewriteValuegeneric(v *Value) bool {
 	switch v.Op {

@@ -4,6 +4,10 @@
 
 package ssa
 
+import (
+	"cmd/compile/internal/types"
+)
+
 // ----------------------------------------------------------------------------
 // Sparse Conditional Constant Propagation
 //
@@ -111,7 +115,7 @@ func sccp(f *Func) {
 	}
 
 	// apply optimizations based on discovered constants
-	constCnt, rewireCnt := t.replaceConst()
+	constCnt, rewireCnt := t.applyOpts()
 	if f.pass.debug > 0 {
 		if constCnt > 0 || rewireCnt > 0 {
 			f.Warnl(f.Entry.Pos, "Phase SCCP for %v : %v constants, %v dce", f.Name, constCnt, rewireCnt)
@@ -128,12 +132,13 @@ func equals(a, b lattice) bool {
 		return false
 	}
 	if a.tag == constant {
-		// The same content of const value may be different, we should
-		// compare with auxInt instead
 		v1 := a.val
 		v2 := b.val
-		if v1.Op == v2.Op && v1.AuxInt == v2.AuxInt {
-			return true
+		if v1.Op == v2.Op {
+			if v1.Op == OpConstString {
+				return auxToString(v1.Aux) == auxToString(v2.Aux)
+			}
+			return v1.AuxInt == v2.AuxInt
 		} else {
 			return false
 		}
@@ -213,6 +218,13 @@ func possibleConst(val *Value) bool {
 		OpOr8, OpOr16, OpOr32, OpOr64,
 		OpXor8, OpXor16, OpXor32, OpXor64:
 		return true
+	case
+		// builtin calls
+		OpStaticLECall:
+		return isConcatString(val)
+	case OpSelectN:
+		// SelectN could be constant if it comes from a concatstring call
+		return true
 	default:
 		return false
 	}
@@ -233,11 +245,24 @@ func (t *worklist) getLatticeCell(val *Value) lattice {
 func isConst(val *Value) bool {
 	switch val.Op {
 	case OpConst64, OpConst32, OpConst16, OpConst8,
-		OpConstBool, OpConst32F, OpConst64F:
+		OpConstBool, OpConst32F, OpConst64F, OpConstString:
 		return true
 	default:
 		return false
 	}
+}
+
+func isConcatString(val *Value) bool {
+	aux, ok := val.Aux.(*AuxCall)
+	if !ok || aux.Fn == nil {
+		return false
+	}
+	fnName := aux.Fn.String()
+	return fnName == "runtime.concatstring2" ||
+		fnName == "runtime.concatstring3" ||
+		fnName == "runtime.concatstring4" ||
+		fnName == "runtime.concatstring5" ||
+		fnName == "runtime.concatstrings"
 }
 
 // buildDefUses builds def-use chain for some values early, because once the
@@ -320,7 +345,7 @@ func (t *worklist) meet(val *Value) lattice {
 	return optimisticLt
 }
 
-func computeLattice(f *Func, val *Value, args ...*Value) lattice {
+func evalArithmetic(f *Func, val *Value, args ...*Value) lattice {
 	// In general, we need to perform constant evaluation based on constant args:
 	//
 	//  res := lattice{constant, nil}
@@ -361,6 +386,52 @@ func computeLattice(f *Func, val *Value, args ...*Value) lattice {
 	return lattice{bottom, nil}
 }
 
+func (t *worklist) evalConcatString(f *Func, val *Value) lattice {
+	// For concatstring2-5, arguments are: buf, str1, str2, ..., mem
+	// We want to optimize when all string arguments are constant
+
+	nargs := len(val.Args)
+	if nargs < 3 {
+		// At least buf, one string, mem are required
+		return lattice{bottom, nil}
+	}
+
+	// Check if all string arguments can be traced back to constant strings
+	stringArgs := val.Args[1 : nargs-1]
+	constStrings := make([]string, 0)
+
+	// This Call can be optimized if all arguments are constant strings. The
+	// transfer rules are as follows:
+	//
+	// 	Bottom ∩ any = Bottom
+	// 	Top ∩ any = Top
+	// 	ConstantA ∩ ConstantA = ConstantC (concat(A, B, ...))
+	hasTop := false
+	for _, arg := range stringArgs {
+		argLt := t.getLatticeCell(arg)
+		if argLt.tag == bottom {
+			return lattice{bottom, nil}
+		}
+		if argLt.tag == top {
+			hasTop = true
+			continue
+		}
+		str := auxToString(argLt.val.Aux)
+		constStrings = append(constStrings, str)
+	}
+	if hasTop {
+		return lattice{top, nil}
+	}
+
+	// All arguments are constant strings! Concatenate them at compile time
+	result := ""
+	for _, s := range constStrings {
+		result += s
+	}
+	newConst := f.ConstString(types.Types[types.TSTRING], result)
+	return lattice{constant, newConst}
+}
+
 func (t *worklist) visitValue(val *Value) {
 	if !possibleConst(val) {
 		// fast fail for always worst Values, i.e. there is no lowering happen
@@ -383,7 +454,7 @@ func (t *worklist) visitValue(val *Value) {
 	switch val.Op {
 	// they are constant values, aren't they?
 	case OpConst64, OpConst32, OpConst16, OpConst8,
-		OpConstBool, OpConst32F, OpConst64F: //TODO: support ConstNil ConstString etc
+		OpConstBool, OpConst32F, OpConst64F, OpConstString: //TODO: support ConstNil etc
 		t.latticeCells[val] = lattice{constant, val}
 	// lattice value of copy(x) actually means lattice value of (x)
 	case OpCopy:
@@ -391,7 +462,7 @@ func (t *worklist) visitValue(val *Value) {
 	// phi should be processed specially
 	case OpPhi:
 		t.latticeCells[val] = t.meet(val)
-	// fold 1-input operations:
+	// fold 1-input operations
 	case
 		// negate
 		OpNeg8, OpNeg16, OpNeg32, OpNeg64, OpNeg32F, OpNeg64F,
@@ -419,7 +490,7 @@ func (t *worklist) visitValue(val *Value) {
 
 		if lt1.tag == constant {
 			// here we take a shortcut by reusing generic rules to fold constants
-			t.latticeCells[val] = computeLattice(t.f, val, lt1.val)
+			t.latticeCells[val] = evalArithmetic(t.f, val, lt1.val)
 		} else {
 			t.latticeCells[val] = lattice{lt1.tag, nil}
 		}
@@ -466,13 +537,28 @@ func (t *worklist) visitValue(val *Value) {
 
 		if lt1.tag == constant && lt2.tag == constant {
 			// here we take a shortcut by reusing generic rules to fold constants
-			t.latticeCells[val] = computeLattice(t.f, val, lt1.val, lt2.val)
+			t.latticeCells[val] = evalArithmetic(t.f, val, lt1.val, lt2.val)
 		} else {
 			if lt1.tag == bottom || lt2.tag == bottom {
 				t.latticeCells[val] = lattice{bottom, nil}
 			} else {
 				t.latticeCells[val] = lattice{top, nil}
 			}
+		}
+	// builtin call
+	case OpStaticLECall:
+		if isConcatString(val) {
+			t.latticeCells[val] = t.evalConcatString(t.f, val)
+		} else {
+			t.latticeCells[val] = lattice{bottom, nil}
+		}
+	case OpSelectN:
+		// SelectN is constant if it comes from a concatstring call that can be
+		// optimized to constant.
+		if val.Type.IsMemory() {
+			t.latticeCells[val] = lattice{bottom, nil}
+		} else {
+			t.latticeCells[val] = t.getLatticeCell(val.Args[0])
 		}
 	default:
 		// Any other type of value cannot be a constant, they are always worst(Bottom)
@@ -551,9 +637,33 @@ func rewireSuccessor(block *Block, constVal *Value) bool {
 	}
 }
 
-// replaceConst will replace non-constant values that have been proven by sccp
-// to be constants.
-func (t *worklist) replaceConst() (int, int) {
+func (t *worklist) rewrite(val *Value, constValue *Value) {
+	if val.Op == OpStaticLECall {
+		uses := t.defUse[val]
+		for _, use := range uses {
+			switch use.Op {
+			case OpSelectN:
+				if use.Type.IsMemory() {
+					// Pass through the memory dependency
+					mem := val.MemoryArg()
+					use.copyOf(mem)
+
+				} else if use.Type.IsString() {
+					use.copyOf(constValue)
+				}
+			}
+		}
+		val.copyOf(constValue)
+	} else {
+		// Simply replace the value with the constant value
+		val.reset(constValue.Op)
+		val.Aux = constValue.Aux       // string uses this
+		val.AuxInt = constValue.AuxInt // decimal value uses this
+	}
+}
+
+// applyOpts will apply optimizations based on discovered constants
+func (t *worklist) applyOpts() (int, int) {
 	constCnt, rewireCnt := 0, 0
 	for val, lt := range t.latticeCells {
 		if lt.tag == constant {
@@ -561,8 +671,7 @@ func (t *worklist) replaceConst() (int, int) {
 				if t.f.pass.debug > 0 {
 					t.f.Warnl(val.Pos, "Replace %v with %v", val.LongString(), lt.val.LongString())
 				}
-				val.reset(lt.val.Op)
-				val.AuxInt = lt.val.AuxInt
+				t.rewrite(val, lt.val)
 				constCnt++
 			}
 			// If const value controls this block, rewires successors according to its value
