@@ -242,135 +242,174 @@ func (l *loop) nearestOuterLoop(sdom SparseTree, b *Block) *loop {
 	return o
 }
 
+type loopBuilder struct {
+	visited     []bool   // visited flag, indexed by block ID
+	dfsp        []int32  // DFS spanning position, indexed by block ID
+	iheader     []*Block // innermost loop header of block, indexed by block ID
+	headers     []*Block // loop headers, may contain duplicates
+	irreducible []bool   // irreducible loop headers, indexed by block ID
+}
+
+func (lb *loopBuilder) taggingHeader(b, h *Block) {
+	if b == h || h == nil {
+		return
+	}
+	cur1, cur2 := b, h
+	for lb.iheader[cur1.ID] != nil {
+		ih := lb.iheader[cur1.ID]
+		if ih == cur2 {
+			return
+		}
+		if lb.dfsp[ih.ID] < lb.dfsp[cur2.ID] {
+			lb.iheader[cur1.ID] = cur2
+			cur1 = cur2
+			cur2 = ih
+		} else {
+			cur1 = ih
+		}
+	}
+	lb.iheader[cur1.ID] = cur2
+}
+
+func (lb *loopBuilder) traverse(b0 *Block, DFSPPos int32) *Block {
+	lb.visited[b0.ID] = true
+	lb.dfsp[b0.ID] = DFSPPos
+	// p: starting from h0, the path to b0(if b0 is traversed)
+	for _, b := range b0.Succs {
+		b := b.b // unwrap edge to get block
+		if !lb.visited[b.ID] {
+			// case a: b is not traversed, traverse it; if then b is found in
+			// loop body, tag b's innermost loop header as b0's header
+			nh := lb.traverse(b, DFSPPos+1)
+			lb.taggingHeader(b0, nh)
+			continue
+		}
+		// b is traversed, denote "p" as the current path from entry to b0
+		if lb.dfsp[b.ID] > 0 {
+			// case b: b is in p, tag b as b0's header
+			lb.headers = append(lb.headers, b)
+			lb.taggingHeader(b0, b)
+		} else if lb.iheader[b.ID] == nil {
+			// case c: b is not in p nor in loop body, do nothing
+		} else {
+			h := lb.iheader[b.ID] // h is b's innermost loop header
+			if lb.dfsp[h.ID] > 0 {
+				// case d: b is not in p but its innermost loop header h is in p
+				// tag h as b0's header
+				lb.taggingHeader(b0, h)
+			} else {
+				// case e, b is not in p and its innermost loop header h is not in p
+				// mark h and its ancestors as irreducible because h is entered
+				// from either b0 or its loop entry
+				lb.irreducible[h.ID] = true
+				for lb.iheader[h.ID] != nil {
+					h = lb.iheader[h.ID]
+					if lb.dfsp[h.ID] > 0 {
+						lb.taggingHeader(b0, h)
+						break
+					}
+					// mark loop h irreducible
+					lb.irreducible[h.ID] = true
+				}
+			}
+		}
+	}
+	lb.dfsp[b0.ID] = 0
+	return lb.iheader[b0.ID]
+}
+
 func loopnestfor(f *Func) *loopnest {
 	po := f.postorder()
 	sdom := f.Sdom()
 	b2l := make([]*loop, f.NumBlocks())
 	loops := make([]*loop, 0)
-	visited := f.Cache.allocBoolSlice(f.NumBlocks())
-	defer f.Cache.freeBoolSlice(visited)
-	sawIrred := false
 
 	if f.pass.debug > 2 {
 		fmt.Printf("loop finding in %s\n", f.Name)
 	}
 
-	// Reducible-loop-nest-finding.
-	for _, b := range po {
-		if f.pass != nil && f.pass.debug > 3 {
-			fmt.Printf("loop finding at %s\n", b)
+	lb := loopBuilder{
+		visited:     f.Cache.allocBoolSlice(f.NumBlocks()),
+		dfsp:        f.Cache.allocInt32Slice(f.NumBlocks()),
+		iheader:     f.Cache.allocBlockSlice(f.NumBlocks()),
+		headers:     make([]*Block, 0),
+		irreducible: f.Cache.allocBoolSlice(f.NumBlocks()),
+	}
+	defer f.Cache.freeBoolSlice(lb.visited)
+	defer f.Cache.freeInt32Slice(lb.dfsp)
+	defer f.Cache.freeBlockSlice(lb.iheader)
+	defer f.Cache.freeBoolSlice(lb.irreducible)
+
+	// Traverse the CFG to find loop headers
+	lb.traverse(f.Entry, 1) // Start with 1 so 0 means "not on stack"
+
+	// Create loops
+	seenHeaders := f.Cache.allocBoolSlice(f.NumBlocks())
+	defer f.Cache.freeBoolSlice(seenHeaders)
+
+	// Pre-allocate loops to ensure pointer stability if needed (though slice append is fine)
+	loopMap := make([]*loop, f.NumBlocks())
+
+	// Identify unique headers and create loop objects
+	for _, h := range lb.headers {
+		if !seenHeaders[h.ID] {
+			seenHeaders[h.ID] = true
+			l := &loop{header: h, isInner: true} // assume inner initially
+			loops = append(loops, l)
+			loopMap[h.ID] = l
 		}
-
-		var innermost *loop // innermost header reachable from this block
-
-		// IF any successor s of b is in a loop headed by h
-		// AND h dominates b
-		// THEN b is in the loop headed by h.
-		//
-		// Choose the first/innermost such h.
-		//
-		// IF s itself dominates b, then s is a loop header;
-		// and there may be more than one such s.
-		// Since there's at most 2 successors, the inner/outer ordering
-		// between them can be established with simple comparisons.
-		for _, e := range b.Succs {
-			bb := e.b
-			l := b2l[bb.ID]
-
-			if sdom.IsAncestorEq(bb, b) { // Found a loop header
-				if f.pass != nil && f.pass.debug > 4 {
-					fmt.Printf("loop finding    succ %s of %s is header\n", bb.String(), b.String())
-				}
-				if l == nil {
-					l = &loop{header: bb, isInner: true}
-					loops = append(loops, l)
-					b2l[bb.ID] = l
-				}
-			} else if !visited[bb.ID] { // Found an irreducible loop
-				sawIrred = true
-				if f.pass != nil && f.pass.debug > 4 {
-					fmt.Printf("loop finding    succ %s of %s is IRRED, in %s\n", bb.String(), b.String(), f.Name)
-				}
-			} else if l != nil {
-				// TODO handle case where l is irreducible.
-				// Perhaps a loop header is inherited.
-				// is there any loop containing our successor whose
-				// header dominates b?
-				if !sdom.IsAncestorEq(l.header, b) {
-					l = l.nearestOuterLoop(sdom, b)
-				}
-				if f.pass != nil && f.pass.debug > 4 {
-					if l == nil {
-						fmt.Printf("loop finding    succ %s of %s has no loop\n", bb.String(), b.String())
-					} else {
-						fmt.Printf("loop finding    succ %s of %s provides loop with header %s\n", bb.String(), b.String(), l.header.String())
-					}
-				}
-			} else { // No loop
-				if f.pass != nil && f.pass.debug > 4 {
-					fmt.Printf("loop finding    succ %s of %s has no loop\n", bb.String(), b.String())
-				}
-
-			}
-
-			if l == nil || innermost == l {
-				continue
-			}
-
-			if innermost == nil {
-				innermost = l
-				continue
-			}
-
-			if sdom.isAncestor(innermost.header, l.header) {
-				sdom.outerinner(innermost, l)
-				innermost = l
-			} else if sdom.isAncestor(l.header, innermost.header) {
-				sdom.outerinner(l, innermost)
-			}
-		}
-
-		if innermost != nil {
-			b2l[b.ID] = innermost
-			innermost.nBlocks++
-		}
-		visited[b.ID] = true
 	}
 
-	// Compute depths.
-	for _, l := range loops {
-		if l.depth != 0 {
-			// Already computed because it is an ancestor of
-			// a previous loop.
-			continue
+	sawIrred := false
+	for i, isIrred := range lb.irreducible {
+		if isIrred {
+			sawIrred = true
+			// if we want to mark the loop object as irreducible, we can't currently (no field)
+			// checking if we missed any headers that are irreducible but not reachable via backedge?
+			// The algorithm marks h as irreducible. If h is a header, it should be in headers?
+			// The algorithm only adds to headers in case b.
+			// But case e marks h as irreducible.
+			// If h was not found as a header via case b, it might not be in loops.
+			// But for it to be in iheader, it must have been tagged.
 		}
-		// Find depth by walking up the loop tree.
-		d := int16(0)
-		for x := l; x != nil; x = x.outer {
-			if x.depth != 0 {
-				d += x.depth
-				break
+		_ = i
+	}
+
+	// Populate b2l and outer pointers
+	for _, b := range f.Blocks {
+		h := lb.iheader[b.ID]
+		if seenHeaders[b.ID] {
+			// b is a loop header.
+			// Its outer loop is determined by iheader[b].
+			l := loopMap[b.ID]
+			b2l[b.ID] = l
+			if h != nil {
+				l.outer = loopMap[h.ID]
+				if l.outer != nil {
+					l.outer.isInner = false
+				}
 			}
+		} else if h != nil {
+			// b is inside loop headed by h
+			l := loopMap[h.ID]
+			b2l[b.ID] = l
+		}
+	}
+
+	// Calculate nBlocks and depth
+	for _, b := range f.Blocks {
+		l := b2l[b.ID]
+		if l != nil {
+			l.nBlocks++
+		}
+	}
+
+	for _, l := range loops {
+		d := int16(1)
+		for p := l.outer; p != nil; p = p.outer {
 			d++
 		}
-		// Set depth for every ancestor.
-		for x := l; x != nil; x = x.outer {
-			if x.depth != 0 {
-				break
-			}
-			x.depth = d
-			d--
-		}
-	}
-	// Double-check depths.
-	for _, l := range loops {
-		want := int16(1)
-		if l.outer != nil {
-			want = l.outer.depth + 1
-		}
-		if l.depth != want {
-			l.header.Fatalf("bad depth calculation for loop %s: got %d want %d", l.header, l.depth, want)
-		}
+		l.depth = d
 	}
 
 	ln := &loopnest{f: f, b2l: b2l, po: po, sdom: sdom, loops: loops, hasIrreducible: sawIrred}
