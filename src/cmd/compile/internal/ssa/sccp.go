@@ -467,10 +467,10 @@ func (t *worklist) evalConcatString(f *Func, val *Value) lattice {
 		result += s
 	}
 	typ := &f.Config.Types
+	sb := f.Entry.NewValue0(src.NoXPos, OpSB, typ.Uintptr)
 	addr := f.Entry.NewValue0(src.NoXPos, OpAddr, typ.BytePtr)
 	addr.Aux = symToAux(f.fe.StringData(result))
-	addr.AddArg(val.MemoryArg())
-	fmt.Println("evalConcatString", addr.LongString())
+	addr.AddArg(sb)
 	return lattice{constant, addr}
 }
 
@@ -747,7 +747,7 @@ func rewireSuccessor(block *Block, constVal *Value) bool {
 }
 
 func (t *worklist) rewrite(val *Value, constValue *Value) {
-	if val.Op == OpStaticLECall {
+	if val.Op == OpStaticCall {
 		uses := t.defUse[val]
 		for _, use := range uses {
 			switch use.Op {
@@ -756,19 +756,41 @@ func (t *worklist) rewrite(val *Value, constValue *Value) {
 					// Pass through the memory dependency
 					mem := val.MemoryArg()
 					use.copyOf(mem)
-				} else {
+				} else if use.Type.IsInteger() {
+					str, ok := findStringAddr(constValue)
+					if !ok {
+						t.f.Fatalf("cannot find string symbol from OpAddr")
+					}
+					var lenConst *Value
+					switch t.f.Config.PtrSize {
+					case 4:
+						lenConst = t.f.ConstInt32(types.Types[types.TINT32], int32(len(str)))
+					case 8:
+						lenConst = t.f.ConstInt64(types.Types[types.TINT64], int64(len(str)))
+					default:
+						t.f.Fatalf("unexpected type size %d", val.Type.Size())
+					}
+					use.reset(lenConst.Op)
+					use.AuxInt = lenConst.AuxInt
+					use.Type = lenConst.Type
+				} else if use.Type.IsPtr() {
 					use.copyOf(constValue)
+				} else {
+					t.f.Fatalf("unexpected type %v", use.Type)
 				}
 			}
 		}
 		val.copyOf(constValue)
-	} else if val.Op == OpAddr || constValue.Op == OpAddr {
+		fmt.Printf("==SCCP done %v\n", t.f.Name)
+	} else if val.Op == OpAddr {
 		// Ignore addr of string symbol
 	} else {
 		// Simply replace the value with the constant value
 		val.reset(constValue.Op)
-		val.Aux = constValue.Aux       // string uses this
-		val.AuxInt = constValue.AuxInt // decimal value uses this
+		val.AddArgs(constValue.Args...)
+		val.Aux = constValue.Aux
+		val.AuxInt = constValue.AuxInt
+		val.Type = constValue.Type
 	}
 }
 
@@ -784,6 +806,7 @@ func (t *worklist) applyOpts() (int, int) {
 				t.rewrite(val, lt.val)
 				constCnt++
 			}
+
 			// If const value controls this block, rewires successors according to its value
 			ctrlBlock := t.defBlock[val]
 			for _, block := range ctrlBlock {
