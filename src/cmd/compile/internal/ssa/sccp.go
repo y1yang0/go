@@ -6,7 +6,10 @@ package ssa
 
 import (
 	"cmd/compile/internal/types"
+	"cmd/internal/obj"
+	"cmd/internal/objabi"
 	"cmd/internal/src"
+	"fmt"
 	"strings"
 )
 
@@ -228,10 +231,13 @@ func possibleConst(val *Value) bool {
 		return true
 	case
 		// builtin calls
-		OpStaticLECall:
+		OpStaticCall:
 		return isConcatString(val) || isCmpString(val)
 	case OpSelectN:
-		// SelectN could be constant if it comes from a concatstring call
+		// Could be constant if it comes from a concatstring call
+		return true
+	case OpAddr:
+		// Could be constant if it's addr of read-only string symbol
 		return true
 	default:
 		return false
@@ -253,7 +259,7 @@ func (t *worklist) getLatticeCell(val *Value) lattice {
 func isConst(val *Value) bool {
 	switch val.Op {
 	case OpConst64, OpConst32, OpConst16, OpConst8,
-		OpConstBool, OpConst32F, OpConst64F, OpConstString:
+		OpConstBool, OpConst32F, OpConst64F:
 		return true
 	default:
 		return false
@@ -406,17 +412,24 @@ func evalArithmetic(f *Func, val *Value, args ...*Value) lattice {
 	return lattice{bottom, nil}
 }
 
-func (t *worklist) evalConcatString(f *Func, val *Value) lattice {
-	// For concatstring2-5, arguments are: buf, str1, str2, ..., mem
-	// We want to optimize when all string arguments are constant
-
-	nargs := len(val.Args)
-	if nargs < 3 {
-		// At least buf, one string, mem are required
-		return lattice{bottom, nil}
+func findStringAddr(val *Value) (string, bool) {
+	if val.Op != OpAddr || val.Aux == nil {
+		return "", false
 	}
+	sym, ok := val.Aux.(*obj.LSym)
+	if !ok {
+		return "", false
+	}
+	if sym.Type != objabi.SRODATA {
+		return "", false
+	}
+	// String data is stored in sym.P ([]byte)
+	return string(sym.P), true
+}
 
-	// Check if all string arguments can be traced back to constant strings
+func (t *worklist) evalConcatString(f *Func, val *Value) lattice {
+	// We want to optimize when all string arguments are constant
+	nargs := len(val.Args)
 	stringArgs := val.Args[1 : nargs-1]
 	constStrings := make([]string, 0)
 
@@ -436,21 +449,29 @@ func (t *worklist) evalConcatString(f *Func, val *Value) lattice {
 			hasTop = true
 			continue
 		}
-		str := auxToString(argLt.val.Aux)
-		constStrings = append(constStrings, str)
+		if arg.Op == OpAddr {
+			str, ok := findStringAddr(arg)
+			if !ok {
+				return lattice{bottom, nil}
+			}
+			constStrings = append(constStrings, str)
+		}
 	}
 	if hasTop {
 		return lattice{top, nil}
 	}
 
-	// All arguments are constant strings! Concatenate them at compile time
+	// All arguments are constant strings, concatenate them at compile time
 	result := ""
 	for _, s := range constStrings {
 		result += s
 	}
-	newConst := f.newValue(OpConstString, types.Types[types.TSTRING], f.Entry, src.NoXPos)
-	newConst.Aux = StringToAux(result)
-	return lattice{constant, newConst}
+	typ := &f.Config.Types
+	addr := f.Entry.NewValue0(src.NoXPos, OpAddr, typ.BytePtr)
+	addr.Aux = symToAux(f.fe.StringData(result))
+	addr.AddArg(val.MemoryArg())
+	fmt.Println("evalConcatString", addr.LongString())
+	return lattice{constant, addr}
 }
 
 func (t *worklist) evalCmpString(f *Func, val *Value) lattice {
@@ -623,12 +644,12 @@ func (t *worklist) visitValue(val *Value) {
 			}
 		}
 	// builtin call
-	case OpStaticLECall:
+	case OpStaticCall:
 		switch {
 		case isConcatString(val):
 			t.latticeCells[val] = t.evalConcatString(t.f, val)
-		case isCmpString(val):
-			t.latticeCells[val] = t.evalCmpString(t.f, val)
+		// case isCmpString(val):
+		// t.latticeCells[val] = t.evalCmpString(t.f, val)
 		default:
 			t.latticeCells[val] = lattice{bottom, nil}
 		}
@@ -640,7 +661,15 @@ func (t *worklist) visitValue(val *Value) {
 		} else {
 			t.latticeCells[val] = t.getLatticeCell(val.Args[0])
 		}
+	case OpAddr:
+		_, ok := findStringAddr(val)
+		if !ok {
+			t.latticeCells[val] = lattice{bottom, nil}
+		} else {
+			t.latticeCells[val] = lattice{constant, val}
+		}
 	default:
+		t.f.Fatalf("Should be processed above: %v", val.LongString())
 		// Any other type of value cannot be a constant, they are always worst(Bottom)
 	}
 }
@@ -733,6 +762,8 @@ func (t *worklist) rewrite(val *Value, constValue *Value) {
 			}
 		}
 		val.copyOf(constValue)
+	} else if val.Op == OpAddr || constValue.Op == OpAddr {
+		// Ignore addr of string symbol
 	} else {
 		// Simply replace the value with the constant value
 		val.reset(constValue.Op)

@@ -457,7 +457,6 @@ commas. For example:
 var passes = [...]pass{
 	{name: "number lines", fn: numberLines, required: true},
 	{name: "early phielim and copyelim", fn: copyelim},
-	{name: "early sccp", fn: sccp},         // avoid unnecessary string calls
 	{name: "early deadcode", fn: deadcode}, // remove generated dead code to avoid doing pointless work during opt
 	{name: "short circuit", fn: shortcircuit},
 	{name: "decompose user", fn: decomposeUser, required: true},
